@@ -1,0 +1,15 @@
+# Runs automatically before every `git commit`. Focused on secrets only.
+# Install once with:  pre-commit install
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: detect-private-key          # blocks SSH / PGP private keys
+      - id: check-added-large-files     # a giant file is often a leaked dump
+        args: ["--maxkb=1024"]
