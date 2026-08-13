@@ -28,3 +28,12 @@ def test_post_task_rejects_missing_goal():
     client = TestClient(create_app())
     resp = client.post("/tasks", json={})   # no 'goal'
     assert resp.status_code == 422          # FastAPI validation error
+
+
+def test_list_agents_reflects_the_registry():
+    client = TestClient(create_app())
+    resp = client.get("/agents")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["planning"] == ["planner"]
+    assert body["coding"] == ["coder"]

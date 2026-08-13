@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from orchestrator.agents import MockAgent
+from orchestrator.registry import AgentRegistry
 from orchestrator.workflow import build_coding_graph
 
 
@@ -34,24 +35,40 @@ class RunResponse(BaseModel):
     review: str | None = None
 
 
-def build_default_graph():
-    """Wire up the workflow with mock agents (Phase 1 stand-ins)."""
+def build_default_registry() -> AgentRegistry:
+    """Register the Phase 1 mock agents under their capabilities."""
+    registry = AgentRegistry()
+    registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
+    registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
+    registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
+    registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
+    return registry
+
+
+def build_graph_from_registry(registry: AgentRegistry):
+    """Pick each role from the registry by capability, then build the graph."""
     return build_coding_graph(
-        planner=MockAgent("planner", output="1. implement it  2. test it"),
-        coder=MockAgent("coder", output="def solution(): ..."),
-        tester=MockAgent("tester", output="all tests passed"),
-        reviewer=MockAgent("reviewer", output="LGTM"),
+        planner=registry.select("planning"),
+        coder=registry.select("coding"),
+        tester=registry.select("testing"),
+        reviewer=registry.select("review"),
     )
 
 
-def create_app(graph=None) -> FastAPI:
-    """Create the FastAPI app. The graph is injectable for testing."""
+def create_app(registry=None, graph=None) -> FastAPI:
+    """Create the FastAPI app. Registry and graph are injectable for testing."""
     app = FastAPI(title="Agent Orchestration Platform")
-    graph = graph or build_default_graph()
+    registry = registry or build_default_registry()
+    graph = graph or build_graph_from_registry(registry)
 
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/agents")
+    async def list_agents() -> dict:
+        """Which agents can serve which capabilities."""
+        return registry.capabilities()
 
     @app.post("/tasks", response_model=RunResponse)
     async def create_task(req: RunRequest) -> RunResponse:
