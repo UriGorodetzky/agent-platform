@@ -45,7 +45,7 @@ orchestrator/
 │   └── claude.py      # ClaudeAgent — runs the Claude Code CLI
 ├── executor.py        # run_subprocess — async process engine (timeout, cancel)
 ├── registry.py        # AgentRegistry — pick an agent by capability
-├── events.py          # Event, EventBus — per-run timeline
+├── events.py          # Event, EventStore — per-run timeline, persisted in SQLite
 ├── workflow.py        # LangGraph state machine + bounded retry loop
 └── api.py             # FastAPI app (see Endpoints below)
 tests/                 # pytest suite

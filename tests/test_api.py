@@ -1,20 +1,30 @@
-"""Tests for the HTTP API using FastAPI's in-process TestClient."""
+"""Tests for the HTTP API using FastAPI's in-process TestClient.
+
+Each app gets its own in-memory EventStore so tests never touch a real file
+and never share state. We use `with TestClient(...)` so all requests in a test
+run on one event loop (aiosqlite's connection is bound to the loop it opened on).
+"""
 
 from fastapi.testclient import TestClient
 
 from orchestrator.api import create_app
+from orchestrator.events import EventStore
+
+
+def make_app():
+    return create_app(events=EventStore(":memory:"))
 
 
 def test_health():
-    client = TestClient(create_app())
-    resp = client.get("/health")
+    with TestClient(make_app()) as client:
+        resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
 
 
 def test_post_task_runs_workflow():
-    client = TestClient(create_app())
-    resp = client.post("/tasks", json={"goal": "implement add()"})
+    with TestClient(make_app()) as client:
+        resp = client.post("/tasks", json={"goal": "implement add()"})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -22,17 +32,18 @@ def test_post_task_runs_workflow():
     assert body["tests_passed"] is True   # default mock tester passes
     assert body["attempts"] == 1
     assert body["review"] == "LGTM"
+    assert body["run_id"]                 # a run id was assigned
 
 
 def test_post_task_rejects_missing_goal():
-    client = TestClient(create_app())
-    resp = client.post("/tasks", json={})   # no 'goal'
-    assert resp.status_code == 422          # FastAPI validation error
+    with TestClient(make_app()) as client:
+        resp = client.post("/tasks", json={})   # no 'goal'
+    assert resp.status_code == 422               # FastAPI validation error
 
 
 def test_list_agents_reflects_the_registry():
-    client = TestClient(create_app())
-    resp = client.get("/agents")
+    with TestClient(make_app()) as client:
+        resp = client.get("/agents")
     assert resp.status_code == 200
     body = resp.json()
     assert body["planning"] == ["planner"]
@@ -40,10 +51,10 @@ def test_list_agents_reflects_the_registry():
 
 
 def test_run_produces_a_queryable_event_timeline():
-    client = TestClient(create_app())
-    run_id = client.post("/tasks", json={"goal": "implement add()"}).json()["run_id"]
+    with TestClient(make_app()) as client:
+        run_id = client.post("/tasks", json={"goal": "implement add()"}).json()["run_id"]
+        events = client.get(f"/tasks/{run_id}/events").json()["events"]
 
-    events = client.get(f"/tasks/{run_id}/events").json()["events"]
     types = [e["type"] for e in events]
 
     # The run's story: it starts, agents run, it completes.

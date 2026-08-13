@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from orchestrator.agents import MockAgent
-from orchestrator.events import EventBus, EventType
+from orchestrator.events import EventStore, EventType
 from orchestrator.registry import AgentRegistry
 from orchestrator.workflow import build_coding_graph
 
@@ -49,7 +49,7 @@ def build_default_registry() -> AgentRegistry:
     return registry
 
 
-def build_graph_from_registry(registry: AgentRegistry, events: EventBus | None = None):
+def build_graph_from_registry(registry: AgentRegistry, events: EventStore | None = None):
     """Pick each role from the registry by capability, then build the graph."""
     return build_coding_graph(
         planner=registry.select("planning"),
@@ -64,7 +64,7 @@ def create_app(registry=None, graph=None, events=None) -> FastAPI:
     """Create the FastAPI app. Registry, graph, and events are injectable."""
     app = FastAPI(title="Agent Orchestration Platform")
     registry = registry or build_default_registry()
-    events = events or EventBus()
+    events = events or EventStore()
     graph = graph or build_graph_from_registry(registry, events)
 
     @app.get("/health")
@@ -79,11 +79,11 @@ def create_app(registry=None, graph=None, events=None) -> FastAPI:
     @app.post("/tasks", response_model=RunResponse)
     async def create_task(req: RunRequest) -> RunResponse:
         run_id = uuid4().hex
-        events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
+        await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
         state = await graph.ainvoke({"goal": req.goal, "run_id": run_id})
 
-        events.emit(
+        await events.emit(
             run_id,
             EventType.TASK_COMPLETED,
             tests_passed=state.get("tests_passed", False),
@@ -103,7 +103,7 @@ def create_app(registry=None, graph=None, events=None) -> FastAPI:
         """The timeline of a run: what happened, in order."""
         return {
             "run_id": run_id,
-            "events": [event.model_dump(mode="json") for event in events.get(run_id)],
+            "events": [event.model_dump(mode="json") for event in await events.get(run_id)],
         }
 
     return app

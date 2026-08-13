@@ -14,6 +14,11 @@ venv/
 .env
 *.local
 
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
 # OS
 .DS_Store
 Thumbs.db

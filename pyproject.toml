@@ -12,6 +12,7 @@ dependencies = [
     "langgraph>=0.2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "aiosqlite>=0.19",
 ]
 
 [project.optional-dependencies]

@@ -20,7 +20,7 @@ from typing import Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from orchestrator.agents.base import Agent
-from orchestrator.events import EventBus, EventType
+from orchestrator.events import EventStore, EventType
 from orchestrator.models import AgentResult, Task, TaskStatus
 
 
@@ -47,7 +47,7 @@ def build_coding_graph(
     reviewer: Agent,
     *,
     max_iterations: int = 3,
-    events: Optional[EventBus] = None,
+    events: Optional[EventStore] = None,
 ):
     """Build and compile the coding workflow with a bounded retry loop.
 
@@ -59,7 +59,7 @@ def build_coding_graph(
         """Call an agent, emitting start/finish events around it."""
         run_id = state.get("run_id")
         if events is not None and run_id is not None:
-            events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node)
+            await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node)
 
         result = await agent.execute(task)
 
@@ -69,7 +69,7 @@ def build_coding_graph(
                 if result.status is TaskStatus.SUCCESS
                 else EventType.AGENT_FAILED
             )
-            events.emit(run_id, done, agent=agent.name, node=node, status=result.status.value)
+            await events.emit(run_id, done, agent=agent.name, node=node, status=result.status.value)
         return result
 
     async def planner_node(state: WorkflowState) -> dict:
