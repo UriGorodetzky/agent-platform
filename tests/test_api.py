@@ -37,3 +37,19 @@ def test_list_agents_reflects_the_registry():
     body = resp.json()
     assert body["planning"] == ["planner"]
     assert body["coding"] == ["coder"]
+
+
+def test_run_produces_a_queryable_event_timeline():
+    client = TestClient(create_app())
+    run_id = client.post("/tasks", json={"goal": "implement add()"}).json()["run_id"]
+
+    events = client.get(f"/tasks/{run_id}/events").json()["events"]
+    types = [e["type"] for e in events]
+
+    # The run's story: it starts, agents run, it completes.
+    assert types[0] == "TASK_STARTED"
+    assert types[-1] == "TASK_COMPLETED"
+    assert "AGENT_STARTED" in types
+    assert "AGENT_COMPLETED" in types
+    # planner + coder + tester + reviewer each start once on the happy path.
+    assert types.count("AGENT_STARTED") == 4

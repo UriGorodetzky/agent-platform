@@ -41,10 +41,23 @@ orchestrator/
 ├── models.py          # Task, AgentResult, TaskStatus (Pydantic)
 ├── agents/
 │   ├── base.py        # Agent ABC — the interface
-│   └── mock.py        # MockAgent — configurable fake for tests/demos
+│   ├── mock.py        # MockAgent — configurable fake for tests/demos
+│   └── claude.py      # ClaudeAgent — runs the Claude Code CLI
+├── executor.py        # run_subprocess — async process engine (timeout, cancel)
+├── registry.py        # AgentRegistry — pick an agent by capability
+├── events.py          # Event, EventBus — per-run timeline
 ├── workflow.py        # LangGraph state machine + bounded retry loop
-└── api.py             # FastAPI app: POST /tasks, GET /health
-tests/                 # pytest suite (models, agents, workflow, api)
+└── api.py             # FastAPI app (see Endpoints below)
+tests/                 # pytest suite
+```
+
+## Endpoints
+
+```text
+POST /tasks                  run a workflow; returns run_id + result
+GET  /tasks/{run_id}/events  the event timeline of a run
+GET  /agents                 which agents serve which capabilities
+GET  /health                 liveness check
 ```
 
 ## Run it
