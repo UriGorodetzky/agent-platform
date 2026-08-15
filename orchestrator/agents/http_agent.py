@@ -36,14 +36,14 @@ class HTTPAgent(Agent):
         payload = {"task_id": task.id, "prompt": task.prompt, "context": task.context}
         try:
             data = await self._post(payload)
-        except (httpx.ConnectError, httpx.ConnectTimeout):
-            # Could not establish a connection (service down, or connect timed out).
-            return self._failure(task, "unreachable")
-        except httpx.TimeoutException:
-            # Connected, but the response was too slow (read/write timeout).
-            return self._failure(task, "timeout")
-        except httpx.HTTPError as exc:
-            return self._failure(task, "http_error", detail=str(exc))
+        except httpx.HTTPStatusError as exc:
+            # We reached the service, but it answered with a 4xx/5xx status.
+            return self._failure(task, "http_error", status_code=exc.response.status_code)
+        except httpx.RequestError as exc:
+            # We never got a response: connection refused, timeout, DNS, reset...
+            # These vary by OS (e.g. ConnectError vs ConnectTimeout), so we catch
+            # the stable parent and keep the specific name only as diagnostic data.
+            return self._failure(task, "network_error", detail=type(exc).__name__)
 
         ok = data.get("status") == "success"
         return AgentResult(

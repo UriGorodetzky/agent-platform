@@ -1,0 +1,4 @@
+# Normalize line endings across operating systems.
+# Files are stored with LF in the repo; git converts on checkout as needed,
+# so Windows and Unix contributors get consistent, diff-clean files.
+* text=auto eol=lf

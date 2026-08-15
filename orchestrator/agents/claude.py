@@ -8,9 +8,24 @@ turns the process result back into an AgentResult. All the process mechanics
 
 from __future__ import annotations
 
+import sys
+
 from orchestrator.agents.base import Agent
 from orchestrator.executor import run_subprocess
 from orchestrator.models import AgentResult, Task, TaskStatus
+
+
+def _default_claude_command() -> list[str]:
+    """The Claude CLI invocation, per OS — the one place OS branching belongs.
+
+    On Windows the ``claude`` executable is a ``.cmd`` batch script, which
+    ``CreateProcess`` cannot run directly, so it must go through ``cmd /c``.
+    On Unix the plain executable runs as-is. Isolating this here keeps the
+    OS-specific detail out of the rest of the code.
+    """
+    if sys.platform == "win32":
+        return ["cmd", "/c", "claude", "-p"]
+    return ["claude", "-p"]
 
 
 class ClaudeAgent(Agent):
@@ -29,9 +44,9 @@ class ClaudeAgent(Agent):
         cwd: str | None = None,
     ) -> None:
         self.name = name
-        # Default: real Claude Code CLI in non-interactive print mode.
-        # NOTE: verify the exact flags against your installed CLI version.
-        self._command = command or ["claude", "-p"]
+        # Default: real Claude Code CLI in non-interactive print mode,
+        # invoked correctly for the current OS.
+        self._command = command or _default_claude_command()
         self._timeout = timeout
         self._cwd = cwd
 

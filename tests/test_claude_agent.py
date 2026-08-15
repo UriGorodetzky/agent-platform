@@ -7,9 +7,15 @@ the real CLI and without spending any tokens.
 import sys
 
 from orchestrator.agents import ClaudeAgent
+from orchestrator.agents.claude import _default_claude_command
 from orchestrator.models import Task, TaskStatus
 
 PY = sys.executable
+
+
+def test_default_command_targets_the_cli_on_any_os():
+    cmd = _default_claude_command()
+    assert "claude" in cmd and "-p" in cmd   # true on Windows and Unix alike
 
 
 def task(prompt: str = "hello") -> Task:

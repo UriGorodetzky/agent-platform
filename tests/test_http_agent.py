@@ -55,9 +55,11 @@ async def test_http_agent_maps_service_failure():
 
 
 async def test_http_agent_handles_unreachable_service():
-    # Nothing is listening here -> connection refused -> FAILURE, not a crash.
+    # Nothing is listening here. The exact OS error differs (ConnectError on
+    # Linux, ConnectTimeout on Windows) but the classification is the same.
     agent = HTTPAgent("dead", base_url="http://127.0.0.1:59999", timeout=2)
     result = await agent.execute(task())
 
     assert result.status is TaskStatus.FAILURE
-    assert result.metadata["error"] == "unreachable"
+    assert result.metadata["error"] == "network_error"   # OS-independent
+    assert "detail" in result.metadata                   # the specific type, for debugging
