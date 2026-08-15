@@ -66,6 +66,13 @@ uvicorn services.echo_agent.main:app --port 9001
 The orchestrator reaches it through `HTTPAgent(base_url="http://127.0.0.1:9001")`,
 which implements the same `Agent` interface as every in-process agent.
 
+Or run it as a Docker container (self-contained, its own dependencies):
+
+```bash
+docker build -t echo-agent:0.1 services/echo_agent
+docker run -d --name echo -p 9001:9001 echo-agent:0.1
+```
+
 ## Endpoints
 
 ```text
