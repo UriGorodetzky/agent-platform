@@ -1,0 +1,4 @@
+# This service's OWN dependencies — just what it needs to serve HTTP.
+# (The orchestrator's deps like langgraph/aiosqlite are irrelevant here.)
+fastapi>=0.110
+uvicorn[standard]>=0.29
