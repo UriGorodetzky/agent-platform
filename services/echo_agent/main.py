@@ -11,8 +11,15 @@ Run it locally:
 
 from __future__ import annotations
 
+import os
+import socket
+
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
+
+# Who am I? Set per replica via the AGENT_ID env var (falls back to the
+# container's hostname). This lets us SEE which replica handled each request.
+INSTANCE_ID = os.environ.get("AGENT_ID", socket.gethostname())
 
 
 class ExecuteRequest(BaseModel):
@@ -50,12 +57,12 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
             task_id=req.task_id,
             status="failure",
             output="",
-            metadata={"agent": "echo-agent", "reason": "forced failure"},
+            metadata={"agent": "echo-agent", "instance": INSTANCE_ID, "reason": "forced failure"},
         )
 
     return ExecuteResponse(
         task_id=req.task_id,
         status="success",
         output=f"echo: {req.prompt}",
-        metadata={"agent": "echo-agent"},
+        metadata={"agent": "echo-agent", "instance": INSTANCE_ID},
     )

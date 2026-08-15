@@ -14,9 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Now copy the app code (changes often → later layer, cheap to rebuild).
 COPY main.py .
 
-# Document the port the app listens on (actual publishing happens at `run`).
-EXPOSE 9001
+# A fixed INTERNAL port. Thanks to network-namespace isolation this never
+# clashes with the host or other containers, so it can be a stable convention.
+# The host-side port is chosen later (in docker-compose.yml), not here.
+EXPOSE 8000
 
 # Bind to 0.0.0.0, NOT 127.0.0.1: inside a container, 127.0.0.1 is reachable
 # only from within the container. 0.0.0.0 lets the host reach it via -p mapping.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9001"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

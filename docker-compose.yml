@@ -1,0 +1,34 @@
+# Three replicas of the echo agent, declared once.
+#
+# Each listens on the SAME internal port (8000) — safe, because every
+# container has its own network namespace. The HOST ports (9001-9003) are the
+# real shared resource, so they are assigned here, in one place.
+#
+#   docker compose up -d --build     # start all three
+#   docker compose ps                # see them
+#   docker compose down              # stop and remove all three
+
+services:
+  echo-1:
+    build: ./services/echo_agent
+    image: echo-agent:0.2
+    environment:
+      AGENT_ID: echo-1
+    ports:
+      - "9001:8000"          # host:container
+
+  echo-2:
+    build: ./services/echo_agent
+    image: echo-agent:0.2
+    environment:
+      AGENT_ID: echo-2
+    ports:
+      - "9002:8000"
+
+  echo-3:
+    build: ./services/echo_agent
+    image: echo-agent:0.2
+    environment:
+      AGENT_ID: echo-3
+    ports:
+      - "9003:8000"
