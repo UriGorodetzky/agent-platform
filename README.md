@@ -42,14 +42,29 @@ orchestrator/
 ├── agents/
 │   ├── base.py        # Agent ABC — the interface
 │   ├── mock.py        # MockAgent — configurable fake for tests/demos
-│   └── claude.py      # ClaudeAgent — runs the Claude Code CLI
+│   ├── claude.py      # ClaudeAgent — runs the Claude Code CLI
+│   └── http_agent.py  # HTTPAgent — calls an external agent service over HTTP
 ├── executor.py        # run_subprocess — async process engine (timeout, cancel)
 ├── registry.py        # AgentRegistry — pick an agent by capability
 ├── events.py          # Event, EventStore — per-run timeline, persisted in SQLite
 ├── workflow.py        # LangGraph state machine + bounded retry loop
 └── api.py             # FastAPI app (see Endpoints below)
+services/
+└── echo_agent/        # a standalone external agent (its own FastAPI service)
 tests/                 # pytest suite
 ```
+
+## External agents
+
+An external agent runs as its own service and speaks only a JSON contract
+(POST /execute, GET /health) — no shared code with the orchestrator. Run one:
+
+```bash
+uvicorn services.echo_agent.main:app --port 9001
+```
+
+The orchestrator reaches it through `HTTPAgent(base_url="http://127.0.0.1:9001")`,
+which implements the same `Agent` interface as every in-process agent.
 
 ## Endpoints
 
