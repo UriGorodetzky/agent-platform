@@ -31,14 +31,17 @@ def test_get_by_name():
         reg.get("nobody")
 
 
-def test_first_registered_wins_for_same_capability():
+def test_select_round_robins_across_agents_with_same_capability():
     reg = AgentRegistry()
-    first = MockAgent("coder-1")
-    second = MockAgent("coder-2")
-    reg.register(first, ["coding"])
-    reg.register(second, ["coding"])
+    a = MockAgent("coder-1")
+    b = MockAgent("coder-2")
+    c = MockAgent("coder-3")
+    reg.register(a, ["coding"])
+    reg.register(b, ["coding"])
+    reg.register(c, ["coding"])
 
-    assert reg.select("coding") is first
+    picks = [reg.select("coding") for _ in range(7)]
+    assert picks == [a, b, c, a, b, c, a]   # cycles fairly, then wraps
 
 
 def test_capabilities_introspection():

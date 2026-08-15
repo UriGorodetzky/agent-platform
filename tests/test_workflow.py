@@ -2,6 +2,7 @@
 
 from orchestrator.agents import Agent, MockAgent
 from orchestrator.models import AgentResult, Task, TaskStatus
+from orchestrator.registry import AgentRegistry
 from orchestrator.workflow import build_coding_graph
 
 
@@ -24,14 +25,13 @@ class FlakyTester(Agent):
 
 
 def build(tester: Agent):
-    """Helper: a graph with fixed planner/coder/reviewer and a given tester."""
-    return build_coding_graph(
-        planner=MockAgent("planner", output="the plan"),
-        coder=MockAgent("coder", output="the code"),
-        tester=tester,
-        reviewer=MockAgent("reviewer", output="LGTM"),
-        max_iterations=3,
-    )
+    """Helper: a registry with fixed planner/coder/reviewer and a given tester."""
+    registry = AgentRegistry()
+    registry.register(MockAgent("planner", output="the plan"), ["planning"])
+    registry.register(MockAgent("coder", output="the code"), ["coding"])
+    registry.register(tester, ["testing"])
+    registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
+    return build_coding_graph(registry, max_iterations=3)
 
 
 async def test_happy_path_tests_pass_first_try():

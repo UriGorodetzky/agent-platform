@@ -69,9 +69,18 @@ which implements the same `Agent` interface as every in-process agent.
 Or run it as a Docker container (self-contained, its own dependencies):
 
 ```bash
-docker build -t echo-agent:0.1 services/echo_agent
-docker run -d --name echo -p 9001:9001 echo-agent:0.1
+docker build -t echo-agent:0.2 services/echo_agent
+docker run -d --name echo -p 9001:8000 echo-agent:0.2
 ```
+
+Run **multiple replicas** with Docker Compose (host ports declared in one place):
+
+```bash
+docker compose up -d --build
+```
+
+The registry hands work to the replicas round-robin, so concurrent runs spread
+across them. Each replica reports its `instance` id in the result metadata.
 
 ## Endpoints
 

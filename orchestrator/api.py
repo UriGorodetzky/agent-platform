@@ -11,6 +11,7 @@ Flow of one request:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -50,22 +51,24 @@ def build_default_registry() -> AgentRegistry:
 
 
 def build_graph_from_registry(registry: AgentRegistry, events: EventStore | None = None):
-    """Pick each role from the registry by capability, then build the graph."""
-    return build_coding_graph(
-        planner=registry.select("planning"),
-        coder=registry.select("coding"),
-        tester=registry.select("testing"),
-        reviewer=registry.select("review"),
-        events=events,
-    )
+    """Build the graph over the registry; nodes select agents at run time."""
+    return build_coding_graph(registry, events=events)
 
 
 def create_app(registry=None, graph=None, events=None) -> FastAPI:
     """Create the FastAPI app. Registry, graph, and events are injectable."""
-    app = FastAPI(title="Agent Orchestration Platform")
     registry = registry or build_default_registry()
     events = events or EventStore()
     graph = graph or build_graph_from_registry(registry, events)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: nothing to do (the store connects lazily on first use).
+        yield
+        # Shutdown: release the DB connection and its background thread.
+        await events.close()
+
+    app = FastAPI(title="Agent Orchestration Platform", lifespan=lifespan)
 
     @app.get("/health")
     async def health() -> dict:

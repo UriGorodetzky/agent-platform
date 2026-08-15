@@ -19,9 +19,9 @@ from typing import Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from orchestrator.agents.base import Agent
 from orchestrator.events import EventStore, EventType
 from orchestrator.models import AgentResult, Task, TaskStatus
+from orchestrator.registry import AgentRegistry
 
 
 class WorkflowState(TypedDict, total=False):
@@ -41,22 +41,24 @@ class WorkflowState(TypedDict, total=False):
 
 
 def build_coding_graph(
-    planner: Agent,
-    coder: Agent,
-    tester: Agent,
-    reviewer: Agent,
+    registry: AgentRegistry,
     *,
     max_iterations: int = 3,
     events: Optional[EventStore] = None,
 ):
     """Build and compile the coding workflow with a bounded retry loop.
 
-    If an ``events`` bus is given, each agent call emits AGENT_STARTED and
+    The graph holds no concrete agents — each node asks the ``registry`` for
+    one *at run time*, by capability. That is what makes load balancing real:
+    two concurrent runs get different replicas via the registry's round-robin.
+
+    If an ``events`` store is given, each agent call emits AGENT_STARTED and
     AGENT_COMPLETED/AGENT_FAILED events, tied to ``state['run_id']``.
     """
 
-    async def run_agent(agent: Agent, task: Task, state: WorkflowState, node: str) -> AgentResult:
-        """Call an agent, emitting start/finish events around it."""
+    async def run_agent(node: str, capability: str, task: Task, state: WorkflowState) -> AgentResult:
+        """Select an agent for ``capability`` and run it, emitting events."""
+        agent = registry.select(capability)   # <-- dynamic, per execution
         run_id = state.get("run_id")
         if events is not None and run_id is not None:
             await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node)
@@ -74,23 +76,23 @@ def build_coding_graph(
 
     async def planner_node(state: WorkflowState) -> dict:
         task = Task(type="planning", prompt=f"Make a plan for: {state['goal']}")
-        result = await run_agent(planner, task, state, "planner")
+        result = await run_agent("planner", "planning", task, state)
         return {"plan": result.output}
 
     async def coder_node(state: WorkflowState) -> dict:
         attempts = state.get("attempts", 0) + 1
         task = Task(type="coding", prompt=f"Implement this plan:\n{state.get('plan', '')}")
-        result = await run_agent(coder, task, state, "coder")
+        result = await run_agent("coder", "coding", task, state)
         return {"code": result.output, "attempts": attempts}
 
     async def tester_node(state: WorkflowState) -> dict:
         task = Task(type="testing", prompt=f"Run tests for:\n{state.get('code', '')}")
-        result = await run_agent(tester, task, state, "tester")
+        result = await run_agent("tester", "testing", task, state)
         return {"tests_passed": result.status is TaskStatus.SUCCESS}
 
     async def reviewer_node(state: WorkflowState) -> dict:
         task = Task(type="review", prompt=f"Review this code:\n{state.get('code', '')}")
-        result = await run_agent(reviewer, task, state, "reviewer")
+        result = await run_agent("reviewer", "review", task, state)
         return {"review": result.output}
 
     def route_after_tester(state: WorkflowState) -> str:

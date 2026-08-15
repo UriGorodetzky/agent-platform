@@ -21,6 +21,7 @@ class AgentRegistry:
     def __init__(self) -> None:
         self._by_name: dict[str, Agent] = {}
         self._by_capability: dict[str, list[Agent]] = {}
+        self._next_index: dict[str, int] = {}  # per-capability round-robin cursor
 
     def register(self, agent: Agent, capabilities: list[str]) -> None:
         """Add an agent and record which capabilities it can serve."""
@@ -35,17 +36,21 @@ class AgentRegistry:
         return self._by_name[name]
 
     def select(self, capability: str) -> Agent:
-        """Pick an agent that can serve ``capability``.
+        """Pick an agent that can serve ``capability``, round-robin.
 
-        Policy for now: the first one registered. Later this is where
-        round-robin, least-loaded, or status-aware selection would live.
+        Successive calls cycle through the registered agents, spreading load
+        evenly. This is the single seam where smarter strategies (health-aware,
+        least-loaded) will later plug in. Safe without a lock because we never
+        ``await`` between reading and updating the cursor (single-threaded loop).
         """
         agents = self._by_capability.get(capability, [])
         if not agents:
             raise NoAgentForCapability(
                 f"No agent registered for capability {capability!r}"
             )
-        return agents[0]
+        index = self._next_index.get(capability, 0)
+        self._next_index[capability] = (index + 1) % len(agents)
+        return agents[index % len(agents)]
 
     def capabilities(self) -> dict[str, list[str]]:
         """Map capability -> agent names (for introspection / GET /agents)."""
