@@ -110,7 +110,15 @@ GET  /tasks/{run_id}         the stored run summary (goal, status, result, times
 GET  /tasks/{run_id}/events  the event timeline of a run
 GET  /agents                 which agents serve which capabilities
 GET  /health                 liveness check
+GET  /version                the git commit this image was built from
 GET  /metrics                Prometheus metrics (counters, gauge, histogram)
+```
+
+To bake the commit into the image and verify what's running:
+
+```bash
+GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build orchestrator
+curl -s http://localhost:8080/version    # git_sha should match `git rev-parse --short HEAD`
 ```
 
 ## Run it

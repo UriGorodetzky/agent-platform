@@ -67,6 +67,8 @@ jobs:
         with:
           context: ${{ matrix.context }}
           push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           # GHCR requires a lowercase name; tag with both latest and the commit SHA.
           tags: |
             ghcr.io/urigorodetzky/${{ matrix.image }}:latest

@@ -6,7 +6,10 @@
 
 services:
   orchestrator:
-    build: .                       # root Dockerfile
+    build:
+      context: .                   # root Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}   # set via: GIT_SHA=$(git rev-parse --short HEAD) docker compose ...
     image: agent-orchestrator:0.1
     environment:
       # Service discovery: reach the echo replicas by name, not host ports.

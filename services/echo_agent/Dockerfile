@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Now copy the app code (changes often → later layer, cheap to rebuild).
 COPY main.py .
 
+# Accept (and ignore) GIT_SHA so a shared CD build-arg doesn't warn here.
+ARG GIT_SHA=dev
+
 # A fixed INTERNAL port. Thanks to network-namespace isolation this never
 # clashes with the host or other containers, so it can be a stable convention.
 # The host-side port is chosen later (in docker-compose.yml), not here.

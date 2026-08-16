@@ -33,6 +33,10 @@ from orchestrator.workflow import build_coding_graph
 setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
+# The git commit baked into the image at build time (see Dockerfile). "dev" when
+# running from source. Exposed at /version to verify what's actually deployed.
+GIT_SHA = os.environ.get("GIT_SHA", "dev")
+
 
 class RunRequest(BaseModel):
     """The JSON body a client POSTs to /tasks."""
@@ -102,6 +106,11 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/version")
+    async def version() -> dict:
+        """The git commit this running image was built from."""
+        return {"service": "orchestrator", "git_sha": GIT_SHA}
 
     @app.get("/metrics")
     async def metrics_endpoint() -> Response:
