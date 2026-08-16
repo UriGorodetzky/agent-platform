@@ -17,9 +17,11 @@ import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
+from orchestrator import metrics
 from orchestrator.agents import HTTPAgent, MockAgent
 from orchestrator.events import EventStore, EventType
 from orchestrator.logging_config import run_id_var, setup_logging
@@ -101,6 +103,11 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    @app.get("/metrics")
+    async def metrics_endpoint() -> Response:
+        """Current metric values, in Prometheus text format (for scraping)."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/agents")
     async def list_agents() -> dict:
         """Which agents can serve which capabilities."""
@@ -113,38 +120,43 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
         started = time.perf_counter()
         logger.info("task received", extra={"goal": req.goal})
 
-        await runs.create(run_id, req.goal)                    # record the run (RUNNING)
-        await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
+        metrics.tasks_in_progress.inc()                        # gauge: one more in flight
+        try:
+            await runs.create(run_id, req.goal)                # record the run (RUNNING)
+            await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
-        state = await graph.ainvoke({"goal": req.goal, "run_id": run_id})
+            state = await graph.ainvoke({"goal": req.goal, "run_id": run_id})
 
-        tests_passed = state.get("tests_passed", False)
-        attempts = state.get("attempts", 0)
-        await events.emit(run_id, EventType.TASK_COMPLETED, tests_passed=tests_passed, attempts=attempts)
-        await runs.complete(                                   # fill in the outcome
-            run_id,
-            status=TaskStatus.SUCCESS if tests_passed else TaskStatus.FAILURE,
-            code=state.get("code", ""),
-            review=state.get("review"),
-            tests_passed=tests_passed,
-            attempts=attempts,
-        )
-        logger.info(
-            "task completed",
-            extra={
-                "status": "success" if tests_passed else "failure",
-                "attempts": attempts,
-                "duration_ms": round((time.perf_counter() - started) * 1000),
-            },
-        )
-        return RunResponse(
-            run_id=run_id,
-            goal=state["goal"],
-            code=state.get("code", ""),
-            tests_passed=tests_passed,
-            attempts=attempts,
-            review=state.get("review"),
-        )
+            tests_passed = state.get("tests_passed", False)
+            attempts = state.get("attempts", 0)
+            status = "success" if tests_passed else "failure"
+            await events.emit(run_id, EventType.TASK_COMPLETED, tests_passed=tests_passed, attempts=attempts)
+            await runs.complete(                               # fill in the outcome
+                run_id,
+                status=TaskStatus.SUCCESS if tests_passed else TaskStatus.FAILURE,
+                code=state.get("code", ""),
+                review=state.get("review"),
+                tests_passed=tests_passed,
+                attempts=attempts,
+            )
+
+            duration = time.perf_counter() - started
+            metrics.tasks_total.labels(status=status).inc()   # counter: +1 by outcome
+            metrics.task_duration_seconds.observe(duration)   # histogram: record latency
+            logger.info(
+                "task completed",
+                extra={"status": status, "attempts": attempts, "duration_ms": round(duration * 1000)},
+            )
+            return RunResponse(
+                run_id=run_id,
+                goal=state["goal"],
+                code=state.get("code", ""),
+                tests_passed=tests_passed,
+                attempts=attempts,
+                review=state.get("review"),
+            )
+        finally:
+            metrics.tasks_in_progress.dec()                   # gauge: back down, even on error
 
     @app.get("/tasks/{run_id}", response_model=Run)
     async def get_task(run_id: str) -> Run:

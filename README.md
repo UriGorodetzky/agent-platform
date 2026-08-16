@@ -101,6 +101,7 @@ GET  /tasks/{run_id}         the stored run summary (goal, status, result, times
 GET  /tasks/{run_id}/events  the event timeline of a run
 GET  /agents                 which agents serve which capabilities
 GET  /health                 liveness check
+GET  /metrics                Prometheus metrics (counters, gauge, histogram)
 ```
 
 ## Run it

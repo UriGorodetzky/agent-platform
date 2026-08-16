@@ -21,6 +21,7 @@ from typing import Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from orchestrator import metrics
 from orchestrator.events import EventStore, EventType
 from orchestrator.logging_config import run_id_var
 from orchestrator.models import AgentResult, Task, TaskStatus
@@ -95,11 +96,13 @@ def build_coding_graph(
             result = await agent.execute(task)
 
             if result.status is TaskStatus.SUCCESS:
+                metrics.agent_attempts_total.labels(node=node, outcome="success").inc()
                 registry.record_success(agent)   # feedback: closes the breaker
                 if events is not None and run_id is not None:
                     await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
                 return result
 
+            metrics.agent_attempts_total.labels(node=node, outcome="failure").inc()
             if _is_retryable(result):
                 registry.record_failure(agent)   # feedback: may open the breaker
 

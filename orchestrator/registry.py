@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from orchestrator import metrics
 from orchestrator.agents.base import Agent
 
 logger = logging.getLogger(__name__)
@@ -109,11 +110,12 @@ class AgentRegistry:
         if health.consecutive_failures >= self._failure_threshold:
             was_open = health.opened_at is not None
             health.opened_at = self._clock()   # (re)open — resets the cooldown clock
-            if not was_open:                   # log only on the closed -> open transition
+            if not was_open:                   # log/count only on the closed -> open transition
                 logger.warning(
                     "circuit breaker opened",
                     extra={"agent": agent.name, "failures": health.consecutive_failures},
                 )
+                metrics.circuit_breaker_opens_total.labels(agent=agent.name).inc()
 
     def _is_available(self, agent: Agent) -> bool:
         """True if the agent's breaker allows a call right now."""
