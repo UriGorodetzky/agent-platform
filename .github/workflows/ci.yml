@@ -1,0 +1,35 @@
+# Continuous Integration: run the test suite on every push and pull request.
+# GitHub runs this on a clean Linux machine — an independent check that the
+# code works somewhere other than "my machine".
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # Run the suite on each Python version we support, in parallel.
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the project (with dev dependencies)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q
