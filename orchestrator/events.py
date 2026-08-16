@@ -61,6 +61,8 @@ class EventStore:
             async with self._lock:
                 if self._conn is None:  # double-check: another coroutine may have won
                     conn = await aiosqlite.connect(self._db_path)
+                    # Wait for a lock instead of failing (the runs store shares this file).
+                    await conn.execute("PRAGMA busy_timeout = 5000")
                     await conn.execute(
                         """
                         CREATE TABLE IF NOT EXISTS events (
