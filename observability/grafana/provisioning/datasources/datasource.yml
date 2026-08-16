@@ -1,0 +1,9 @@
+# Auto-configure Grafana's connection to Prometheus (no manual clicking).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090     # reach Prometheus by service name
+    isDefault: true

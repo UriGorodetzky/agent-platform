@@ -1,0 +1,7 @@
+# Tell Grafana to load dashboard JSON files from a directory.
+apiVersion: 1
+providers:
+  - name: default
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
