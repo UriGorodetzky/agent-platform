@@ -97,6 +97,7 @@ curl -X POST http://localhost:8080/tasks -H "Content-Type: application/json" -d 
 
 ```text
 POST /tasks                  run a workflow; returns run_id + result
+GET  /tasks/{run_id}         the stored run summary (goal, status, result, timestamps)
 GET  /tasks/{run_id}/events  the event timeline of a run
 GET  /agents                 which agents serve which capabilities
 GET  /health                 liveness check

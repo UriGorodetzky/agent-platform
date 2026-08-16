@@ -15,12 +15,14 @@ import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from orchestrator.agents import HTTPAgent, MockAgent
 from orchestrator.events import EventStore, EventType
+from orchestrator.models import TaskStatus
 from orchestrator.registry import AgentRegistry
+from orchestrator.runs import Run, RunStore
 from orchestrator.workflow import build_coding_graph
 
 
@@ -69,18 +71,21 @@ def build_graph_from_registry(registry: AgentRegistry, events: EventStore | None
     return build_coding_graph(registry, events=events)
 
 
-def create_app(registry=None, graph=None, events=None) -> FastAPI:
-    """Create the FastAPI app. Registry, graph, and events are injectable."""
+def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
+    """Create the FastAPI app. Registry, graph, events, and runs are injectable."""
+    db_path = os.environ.get("DB_PATH", "orchestrator.db")
     registry = registry or build_default_registry()
-    events = events or EventStore(os.environ.get("DB_PATH", "orchestrator.db"))
+    events = events or EventStore(db_path)
+    runs = runs or RunStore(db_path)
     graph = graph or build_graph_from_registry(registry, events)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: nothing to do (the store connects lazily on first use).
+        # Startup: nothing to do (the stores connect lazily on first use).
         yield
-        # Shutdown: release the DB connection and its background thread.
+        # Shutdown: release both DB connections and their background threads.
         await events.close()
+        await runs.close()
 
     app = FastAPI(title="Agent Orchestration Platform", lifespan=lifespan)
 
@@ -96,24 +101,38 @@ def create_app(registry=None, graph=None, events=None) -> FastAPI:
     @app.post("/tasks", response_model=RunResponse)
     async def create_task(req: RunRequest) -> RunResponse:
         run_id = uuid4().hex
+        await runs.create(run_id, req.goal)                    # record the run (RUNNING)
         await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
         state = await graph.ainvoke({"goal": req.goal, "run_id": run_id})
 
-        await events.emit(
+        tests_passed = state.get("tests_passed", False)
+        attempts = state.get("attempts", 0)
+        await events.emit(run_id, EventType.TASK_COMPLETED, tests_passed=tests_passed, attempts=attempts)
+        await runs.complete(                                   # fill in the outcome
             run_id,
-            EventType.TASK_COMPLETED,
-            tests_passed=state.get("tests_passed", False),
-            attempts=state.get("attempts", 0),
+            status=TaskStatus.SUCCESS if tests_passed else TaskStatus.FAILURE,
+            code=state.get("code", ""),
+            review=state.get("review"),
+            tests_passed=tests_passed,
+            attempts=attempts,
         )
         return RunResponse(
             run_id=run_id,
             goal=state["goal"],
             code=state.get("code", ""),
-            tests_passed=state.get("tests_passed", False),
-            attempts=state.get("attempts", 0),
+            tests_passed=tests_passed,
+            attempts=attempts,
             review=state.get("review"),
         )
+
+    @app.get("/tasks/{run_id}", response_model=Run)
+    async def get_task(run_id: str) -> Run:
+        """The stored summary/result of a run."""
+        run = await runs.get(run_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
+        return run
 
     @app.get("/tasks/{run_id}/events")
     async def get_events(run_id: str) -> dict:

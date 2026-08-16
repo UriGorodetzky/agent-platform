@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 
 from orchestrator.api import create_app
 from orchestrator.events import EventStore
+from orchestrator.runs import RunStore
 
 
 def make_app():
-    return create_app(events=EventStore(":memory:"))
+    return create_app(events=EventStore(":memory:"), runs=RunStore(":memory:"))
 
 
 def test_health():
@@ -48,6 +49,25 @@ def test_list_agents_reflects_the_registry():
     body = resp.json()
     assert body["planning"] == ["planner"]
     assert body["coding"] == ["coder"]
+
+
+def test_get_task_returns_the_stored_run():
+    with TestClient(make_app()) as client:
+        run_id = client.post("/tasks", json={"goal": "implement add()"}).json()["run_id"]
+        run = client.get(f"/tasks/{run_id}").json()
+
+    assert run["run_id"] == run_id
+    assert run["goal"] == "implement add()"
+    assert run["status"] == "success"
+    assert run["tests_passed"] is True
+    assert run["review"] == "LGTM"
+    assert run["completed_at"] is not None
+
+
+def test_get_unknown_task_returns_404():
+    with TestClient(make_app()) as client:
+        resp = client.get("/tasks/does-not-exist")
+    assert resp.status_code == 404
 
 
 def test_run_produces_a_queryable_event_timeline():
