@@ -93,6 +93,15 @@ docker compose up -d --build
 curl -X POST http://localhost:8080/tasks -H "Content-Type: application/json" -d "{\"goal\":\"build X\"}"
 ```
 
+### Observability stack
+
+The compose stack also runs Prometheus and Grafana:
+
+- **Prometheus** at <http://localhost:9090> scrapes the orchestrator's `/metrics` every 5s.
+- **Grafana** at <http://localhost:3000> (anonymous access) auto-loads the
+  "Agent Platform" dashboard — tasks in progress, task rate, p95 latency, and
+  agent attempts. Datasource and dashboard are provisioned from `observability/`.
+
 ## Endpoints
 
 ```text

@@ -1,0 +1,9 @@
+# Prometheus scrape config. It PULLS /metrics from each target on a schedule.
+global:
+  scrape_interval: 5s          # how often to scrape every target
+
+scrape_configs:
+  - job_name: orchestrator
+    static_configs:
+      # Reach the orchestrator by service name over the compose network.
+      - targets: ["orchestrator:8000"]

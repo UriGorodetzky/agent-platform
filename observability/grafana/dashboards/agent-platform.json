@@ -1,0 +1,46 @@
+{
+  "title": "Agent Platform",
+  "uid": "agent-platform",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "5s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Tasks in progress",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "orchestrator_tasks_in_progress", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task rate per second (by status)",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(orchestrator_tasks_total[1m])", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "p95 task latency (seconds)",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, rate(orchestrator_task_duration_seconds_bucket[5m]))", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Agent attempts per second (by node)",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(orchestrator_agent_attempts_total[1m])", "legendFormat": "{{node}} {{outcome}}", "refId": "A" }
+      ]
+    }
+  ]
+}
