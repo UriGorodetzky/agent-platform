@@ -73,14 +73,25 @@ docker build -t echo-agent:0.2 services/echo_agent
 docker run -d --name echo -p 9001:8000 echo-agent:0.2
 ```
 
-Run **multiple replicas** with Docker Compose (host ports declared in one place):
+## Run the whole system (Docker Compose)
+
+One command builds and starts the orchestrator plus three echo replicas:
 
 ```bash
 docker compose up -d --build
 ```
 
-The registry hands work to the replicas round-robin, so concurrent runs spread
-across them. Each replica reports its `instance` id in the result metadata.
+- Orchestrator API on <http://localhost:8080> (docs at `/docs`).
+- The orchestrator reaches the replicas **by service name** (`http://echo-1:8000`)
+  over Docker's internal network — set via the `ECHO_AGENT_URLS` env var, no host
+  ports involved. The registry round-robins across them, so concurrent runs
+  spread out; retries and the circuit breaker route around a failed replica.
+- The SQLite event store lives on a named volume (`DB_PATH=/data/orchestrator.db`),
+  so a run's timeline survives `docker compose restart orchestrator`.
+
+```bash
+curl -X POST http://localhost:8080/tasks -H "Content-Type: application/json" -d "{\"goal\":\"build X\"}"
+```
 
 ## Endpoints
 
