@@ -10,6 +10,11 @@ COPY pyproject.toml ./
 COPY orchestrator/ ./orchestrator/
 RUN pip install --no-cache-dir .
 
+# Stamp the build's git commit into the image, LATE so changing it doesn't
+# bust the (expensive) pip-install layer above. Exposed at runtime via /version.
+ARG GIT_SHA=dev
+ENV GIT_SHA=${GIT_SHA}
+
 EXPOSE 8000
 
 # 0.0.0.0 so the container is reachable from outside its network namespace.

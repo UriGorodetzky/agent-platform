@@ -23,6 +23,13 @@ def test_health():
     assert resp.json() == {"status": "ok"}
 
 
+def test_version_reports_git_sha():
+    with TestClient(make_app()) as client:
+        body = client.get("/version").json()
+    assert body["service"] == "orchestrator"
+    assert "git_sha" in body                 # "dev" from source; a real SHA in an image
+
+
 def test_post_task_runs_workflow():
     with TestClient(make_app()) as client:
         resp = client.post("/tasks", json={"goal": "implement add()"})
