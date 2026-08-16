@@ -16,13 +16,17 @@ can never retry forever.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
 from orchestrator.events import EventStore, EventType
+from orchestrator.logging_config import run_id_var
 from orchestrator.models import AgentResult, Task, TaskStatus
 from orchestrator.registry import AgentRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _is_retryable(result: AgentResult) -> bool:
@@ -79,6 +83,8 @@ def build_coding_graph(
     async def run_agent(node: str, capability: str, task: Task, state: WorkflowState) -> AgentResult:
         """Select an agent, run it, and retry on infrastructure failures."""
         run_id = state.get("run_id")
+        if run_id is not None:
+            run_id_var.set(run_id)            # so every log line here carries the run_id
         result: Optional[AgentResult] = None
 
         for attempt in range(1, retry_attempts + 1):
@@ -105,7 +111,14 @@ def build_coding_graph(
 
             if not _is_retryable(result) or attempt == retry_attempts:
                 break
-            await asyncio.sleep(retry_base_delay * (2 ** (attempt - 1)))   # exponential backoff
+
+            delay = retry_base_delay * (2 ** (attempt - 1))   # exponential backoff
+            logger.warning(
+                "agent failed, retrying",
+                extra={"agent": agent.name, "node": node, "attempt": attempt,
+                       "error": result.metadata.get("error"), "next_delay_s": round(delay, 3)},
+            )
+            await asyncio.sleep(delay)
 
         return result
 

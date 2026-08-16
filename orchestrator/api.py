@@ -11,7 +11,9 @@ Flow of one request:
 
 from __future__ import annotations
 
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -20,10 +22,14 @@ from pydantic import BaseModel, Field
 
 from orchestrator.agents import HTTPAgent, MockAgent
 from orchestrator.events import EventStore, EventType
+from orchestrator.logging_config import run_id_var, setup_logging
 from orchestrator.models import TaskStatus
 from orchestrator.registry import AgentRegistry
 from orchestrator.runs import Run, RunStore
 from orchestrator.workflow import build_coding_graph
+
+setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
+logger = logging.getLogger(__name__)
 
 
 class RunRequest(BaseModel):
@@ -58,8 +64,10 @@ def build_default_registry() -> AgentRegistry:
     if coder_urls:
         for i, url in enumerate(coder_urls, start=1):
             registry.register(HTTPAgent(f"echo-{i}", base_url=url), ["coding"])
+        logger.info("registered HTTP coding agents", extra={"count": len(coder_urls)})
     else:
         registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
+        logger.info("using mock coding agent (no ECHO_AGENT_URLS)")
 
     registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
     registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
@@ -101,6 +109,10 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     @app.post("/tasks", response_model=RunResponse)
     async def create_task(req: RunRequest) -> RunResponse:
         run_id = uuid4().hex
+        run_id_var.set(run_id)                                 # correlate all logs of this run
+        started = time.perf_counter()
+        logger.info("task received", extra={"goal": req.goal})
+
         await runs.create(run_id, req.goal)                    # record the run (RUNNING)
         await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
@@ -117,6 +129,14 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
             tests_passed=tests_passed,
             attempts=attempts,
         )
+        logger.info(
+            "task completed",
+            extra={
+                "status": "success" if tests_passed else "failure",
+                "attempts": attempts,
+                "duration_ms": round((time.perf_counter() - started) * 1000),
+            },
+        )
         return RunResponse(
             run_id=run_id,
             goal=state["goal"],
@@ -131,6 +151,7 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
         """The stored summary/result of a run."""
         run = await runs.get(run_id)
         if run is None:
+            logger.warning("run not found", extra={"requested_run_id": run_id})
             raise HTTPException(status_code=404, detail=f"No run {run_id!r}")
         return run
 

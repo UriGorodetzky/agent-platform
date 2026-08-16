@@ -12,11 +12,14 @@ stop wasting calls (and time) on a replica that is down.
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 from orchestrator.agents.base import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class NoAgentForCapability(Exception):
@@ -104,7 +107,13 @@ class AgentRegistry:
         health = self._health.setdefault(agent.name, _Health())
         health.consecutive_failures += 1
         if health.consecutive_failures >= self._failure_threshold:
-            health.opened_at = self._clock()
+            was_open = health.opened_at is not None
+            health.opened_at = self._clock()   # (re)open — resets the cooldown clock
+            if not was_open:                   # log only on the closed -> open transition
+                logger.warning(
+                    "circuit breaker opened",
+                    extra={"agent": agent.name, "failures": health.consecutive_failures},
+                )
 
     def _is_available(self, agent: Agent) -> bool:
         """True if the agent's breaker allows a call right now."""
