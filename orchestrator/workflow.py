@@ -15,6 +15,7 @@ can never retry forever.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -22,6 +23,18 @@ from langgraph.graph import END, START, StateGraph
 from orchestrator.events import EventStore, EventType
 from orchestrator.models import AgentResult, Task, TaskStatus
 from orchestrator.registry import AgentRegistry
+
+
+def _is_retryable(result: AgentResult) -> bool:
+    """Retry only *infrastructure* failures, not task-level ones.
+
+    An infra failure means the call itself did not go through (network error,
+    timeout, non-zero exit) — our agents mark those with an ``error`` key in
+    metadata. A plain FAILURE without ``error`` means the agent ran and judged
+    the task failed (e.g. a tester reporting tests did not pass); that is not
+    ours to retry here — the workflow's own loop handles it.
+    """
+    return result.status is TaskStatus.FAILURE and "error" in result.metadata
 
 
 class WorkflowState(TypedDict, total=False):
@@ -44,6 +57,8 @@ def build_coding_graph(
     registry: AgentRegistry,
     *,
     max_iterations: int = 3,
+    retry_attempts: int = 3,
+    retry_base_delay: float = 0.1,
     events: Optional[EventStore] = None,
 ):
     """Build and compile the coding workflow with a bounded retry loop.
@@ -52,26 +67,42 @@ def build_coding_graph(
     one *at run time*, by capability. That is what makes load balancing real:
     two concurrent runs get different replicas via the registry's round-robin.
 
-    If an ``events`` store is given, each agent call emits AGENT_STARTED and
+    Each agent call is retried up to ``retry_attempts`` times on infrastructure
+    failures, with exponential backoff starting at ``retry_base_delay``. Because
+    we re-select before every attempt, a retry usually lands on a *different*
+    replica — so a single bad replica does not doom the step.
+
+    If an ``events`` store is given, each attempt emits AGENT_STARTED and
     AGENT_COMPLETED/AGENT_FAILED events, tied to ``state['run_id']``.
     """
 
     async def run_agent(node: str, capability: str, task: Task, state: WorkflowState) -> AgentResult:
-        """Select an agent for ``capability`` and run it, emitting events."""
-        agent = registry.select(capability)   # <-- dynamic, per execution
+        """Select an agent, run it, and retry on infrastructure failures."""
         run_id = state.get("run_id")
-        if events is not None and run_id is not None:
-            await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node)
+        result: Optional[AgentResult] = None
 
-        result = await agent.execute(task)
+        for attempt in range(1, retry_attempts + 1):
+            agent = registry.select(capability)   # re-select each try: round-robin steers away from a bad replica
+            if events is not None and run_id is not None:
+                await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node, attempt=attempt)
 
-        if events is not None and run_id is not None:
-            done = (
-                EventType.AGENT_COMPLETED
-                if result.status is TaskStatus.SUCCESS
-                else EventType.AGENT_FAILED
-            )
-            await events.emit(run_id, done, agent=agent.name, node=node, status=result.status.value)
+            result = await agent.execute(task)
+
+            if result.status is TaskStatus.SUCCESS:
+                if events is not None and run_id is not None:
+                    await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
+                return result
+
+            if events is not None and run_id is not None:
+                await events.emit(
+                    run_id, EventType.AGENT_FAILED,
+                    agent=agent.name, node=node, attempt=attempt, error=result.metadata.get("error"),
+                )
+
+            if not _is_retryable(result) or attempt == retry_attempts:
+                break
+            await asyncio.sleep(retry_base_delay * (2 ** (attempt - 1)))   # exponential backoff
+
         return result
 
     async def planner_node(state: WorkflowState) -> dict:
