@@ -89,9 +89,13 @@ def build_coding_graph(
             result = await agent.execute(task)
 
             if result.status is TaskStatus.SUCCESS:
+                registry.record_success(agent)   # feedback: closes the breaker
                 if events is not None and run_id is not None:
                     await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
                 return result
+
+            if _is_retryable(result):
+                registry.record_failure(agent)   # feedback: may open the breaker
 
             if events is not None and run_id is not None:
                 await events.emit(

@@ -4,9 +4,17 @@ Without it, the graph must name every agent explicitly. With it, the graph
 asks "give me something that can plan / code / test" and the registry decides
 which concrete agent answers. In-memory (plain dicts) for now — no database
 until we genuinely need persistence across restarts.
+
+Selection is round-robin, with a per-agent **circuit breaker**: an agent that
+fails repeatedly is marked unhealthy and skipped until a cooldown passes, so we
+stop wasting calls (and time) on a replica that is down.
 """
 
 from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Callable
 
 from orchestrator.agents.base import Agent
 
@@ -15,13 +23,37 @@ class NoAgentForCapability(Exception):
     """Raised when nothing registered can handle a requested capability."""
 
 
-class AgentRegistry:
-    """Holds agents and indexes them by name and by capability."""
+@dataclass
+class _Health:
+    """Circuit-breaker state for one agent.
 
-    def __init__(self) -> None:
+    ``opened_at is None`` means the breaker is CLOSED (healthy). Once
+    ``consecutive_failures`` reaches the threshold, ``opened_at`` is stamped
+    and the breaker is OPEN. After the cooldown elapses the agent is offered
+    one trial call (HALF-OPEN); its success or failure closes or re-opens it.
+    """
+
+    consecutive_failures: int = 0
+    opened_at: float | None = None
+
+
+class AgentRegistry:
+    """Holds agents, selects by capability (round-robin + circuit breaker)."""
+
+    def __init__(
+        self,
+        *,
+        failure_threshold: int = 3,
+        cooldown: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._by_name: dict[str, Agent] = {}
         self._by_capability: dict[str, list[Agent]] = {}
-        self._next_index: dict[str, int] = {}  # per-capability round-robin cursor
+        self._next_index: dict[str, int] = {}      # per-capability round-robin cursor
+        self._health: dict[str, _Health] = {}      # per-agent breaker state (by name)
+        self._failure_threshold = failure_threshold
+        self._cooldown = cooldown
+        self._clock = clock                         # injectable for testing
 
     def register(self, agent: Agent, capabilities: list[str]) -> None:
         """Add an agent and record which capabilities it can serve."""
@@ -36,21 +68,51 @@ class AgentRegistry:
         return self._by_name[name]
 
     def select(self, capability: str) -> Agent:
-        """Pick an agent that can serve ``capability``, round-robin.
+        """Pick an agent for ``capability``: round-robin, skipping open breakers.
 
-        Successive calls cycle through the registered agents, spreading load
-        evenly. This is the single seam where smarter strategies (health-aware,
-        least-loaded) will later plug in. Safe without a lock because we never
-        ``await`` between reading and updating the cursor (single-threaded loop).
+        Starting at the round-robin cursor, return the first *available* agent
+        (breaker closed, or cooldown elapsed for a half-open trial). If every
+        agent's breaker is open, fall back to the next one anyway — trying is
+        better than hard-failing.
         """
         agents = self._by_capability.get(capability, [])
         if not agents:
             raise NoAgentForCapability(
                 f"No agent registered for capability {capability!r}"
             )
-        index = self._next_index.get(capability, 0)
-        self._next_index[capability] = (index + 1) % len(agents)
-        return agents[index % len(agents)]
+
+        n = len(agents)
+        start = self._next_index.get(capability, 0)
+        for offset in range(n):
+            index = (start + offset) % n
+            agent = agents[index]
+            if self._is_available(agent):
+                self._next_index[capability] = (index + 1) % n
+                return agent
+
+        # All breakers open — advance the cursor and hand one out regardless.
+        index = start % n
+        self._next_index[capability] = (index + 1) % n
+        return agents[index]
+
+    def record_success(self, agent: Agent) -> None:
+        """Report a successful call — closes the breaker (resets its state)."""
+        self._health[agent.name] = _Health()
+
+    def record_failure(self, agent: Agent) -> None:
+        """Report an infrastructure failure — may open the breaker."""
+        health = self._health.setdefault(agent.name, _Health())
+        health.consecutive_failures += 1
+        if health.consecutive_failures >= self._failure_threshold:
+            health.opened_at = self._clock()
+
+    def _is_available(self, agent: Agent) -> bool:
+        """True if the agent's breaker allows a call right now."""
+        health = self._health.get(agent.name)
+        if health is None or health.opened_at is None:
+            return True  # never registered a problem, or breaker is closed
+        # Breaker is open: only available once the cooldown has elapsed (half-open).
+        return (self._clock() - health.opened_at) >= self._cooldown
 
     def capabilities(self) -> dict[str, list[str]]:
         """Map capability -> agent names (for introspection / GET /agents)."""
