@@ -1,0 +1,15 @@
+# Keep the build context small — don't ship the venv, git history, or caches.
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.sqlite*
+tests/
+services/
+*.md
+.env
