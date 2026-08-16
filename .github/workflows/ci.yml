@@ -1,7 +1,6 @@
-# Continuous Integration: run the test suite on every push and pull request.
-# GitHub runs this on a clean Linux machine — an independent check that the
-# code works somewhere other than "my machine".
-name: CI
+# CI: run the test suite on every push and pull request (a clean-machine check).
+# CD: after tests pass on main, build the echo-agent image and push it to GHCR.
+name: CI/CD
 
 on:
   push:
@@ -33,3 +32,33 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  publish-image:
+    # CD: only after ALL test jobs pass, and only for pushes to main (not PRs).
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # let GITHUB_TOKEN push to GHCR
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # auto-provided, no manual secret
+
+      - name: Build and push the echo-agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/echo_agent
+          push: true
+          # GHCR requires a lowercase name; tag with both latest and the commit SHA.
+          tags: |
+            ghcr.io/urigorodetzky/echo-agent:latest
+            ghcr.io/urigorodetzky/echo-agent:${{ github.sha }}
