@@ -11,13 +11,14 @@ Flow of one request:
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from orchestrator.agents import MockAgent
+from orchestrator.agents import HTTPAgent, MockAgent
 from orchestrator.events import EventStore, EventType
 from orchestrator.registry import AgentRegistry
 from orchestrator.workflow import build_coding_graph
@@ -41,10 +42,23 @@ class RunResponse(BaseModel):
 
 
 def build_default_registry() -> AgentRegistry:
-    """Register the Phase 1 mock agents under their capabilities."""
+    """Register agents under their capabilities.
+
+    The "coding" agents come from the ECHO_AGENT_URLS env var (comma-separated
+    URLs) when set — that's how the dockerized orchestrator reaches the echo
+    replicas by service name. With no env var, we fall back to a mock coder so
+    the app still runs locally with zero setup.
+    """
     registry = AgentRegistry()
     registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
-    registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
+
+    coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
+    if coder_urls:
+        for i, url in enumerate(coder_urls, start=1):
+            registry.register(HTTPAgent(f"echo-{i}", base_url=url), ["coding"])
+    else:
+        registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
+
     registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
     registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
     return registry
@@ -58,7 +72,7 @@ def build_graph_from_registry(registry: AgentRegistry, events: EventStore | None
 def create_app(registry=None, graph=None, events=None) -> FastAPI:
     """Create the FastAPI app. Registry, graph, and events are injectable."""
     registry = registry or build_default_registry()
-    events = events or EventStore()
+    events = events or EventStore(os.environ.get("DB_PATH", "orchestrator.db"))
     graph = graph or build_graph_from_registry(registry, events)
 
     @asynccontextmanager

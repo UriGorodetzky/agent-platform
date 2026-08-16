@@ -1,21 +1,33 @@
-# Three replicas of the echo agent, declared once.
+# The whole system in one command: `docker compose up -d --build`.
 #
-# Each listens on the SAME internal port (8000) — safe, because every
-# container has its own network namespace. The HOST ports (9001-9003) are the
-# real shared resource, so they are assigned here, in one place.
-#
-#   docker compose up -d --build     # start all three
-#   docker compose ps                # see them
-#   docker compose down              # stop and remove all three
+# The orchestrator reaches the echo replicas by SERVICE NAME over the internal
+# Docker network (http://echo-1:8000) — no host ports needed for that. Host
+# ports are only for us to poke the services from the outside.
 
 services:
+  orchestrator:
+    build: .                       # root Dockerfile
+    image: agent-orchestrator:0.1
+    environment:
+      # Service discovery: reach the echo replicas by name, not host ports.
+      ECHO_AGENT_URLS: "http://echo-1:8000,http://echo-2:8000,http://echo-3:8000"
+      DB_PATH: /data/orchestrator.db
+    ports:
+      - "8080:8000"                # host 8080 -> orchestrator's 8000
+    volumes:
+      - orchestrator-data:/data    # SQLite DB survives container recreation
+    depends_on:
+      - echo-1
+      - echo-2
+      - echo-3
+
   echo-1:
     build: ./services/echo_agent
     image: echo-agent:0.2
     environment:
       AGENT_ID: echo-1
     ports:
-      - "9001:8000"          # host:container
+      - "9001:8000"                # host:container (for direct debugging)
 
   echo-2:
     build: ./services/echo_agent
@@ -32,3 +44,6 @@ services:
       AGENT_ID: echo-3
     ports:
       - "9003:8000"
+
+volumes:
+  orchestrator-data:               # named volume, managed by Docker
