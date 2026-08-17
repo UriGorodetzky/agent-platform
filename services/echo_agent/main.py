@@ -21,6 +21,9 @@ from pydantic import BaseModel, Field
 # container's hostname). This lets us SEE which replica handled each request.
 INSTANCE_ID = os.environ.get("AGENT_ID", socket.gethostname())
 
+# Bumped per image build — lets us watch a rolling update replace old with new.
+SERVICE_VERSION = "0.3"
+
 
 class ExecuteRequest(BaseModel):
     """The contract: what the orchestrator POSTs to /execute."""
@@ -64,5 +67,5 @@ async def execute(req: ExecuteRequest) -> ExecuteResponse:
         task_id=req.task_id,
         status="success",
         output=f"echo: {req.prompt}",
-        metadata={"agent": "echo-agent", "instance": INSTANCE_ID},
+        metadata={"agent": "echo-agent", "instance": INSTANCE_ID, "version": SERVICE_VERSION},
     )
