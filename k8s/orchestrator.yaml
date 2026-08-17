@@ -1,0 +1,48 @@
+# The orchestrator on Kubernetes: ConfigMap + Deployment + Service.
+
+# Config, decoupled from the image. Note ECHO_AGENT_URLS points at the echo
+# Service NAME (stable), not pod IPs (ephemeral) — the Service load-balances.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-config
+data:
+  ECHO_AGENT_URLS: "http://echo-agent:8000"
+  LOG_LEVEL: "INFO"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orchestrator
+  template:
+    metadata:
+      labels:
+        app: orchestrator
+    spec:
+      containers:
+        - name: orchestrator
+          image: agent-orchestrator:0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: orchestrator-config   # inject all keys as env vars
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+spec:
+  type: NodePort                 # reachable from the host, not just in-cluster
+  selector:
+    app: orchestrator
+  ports:
+    - port: 8000                 # the Service port (in-cluster)
+      targetPort: 8000           # the container port
+      nodePort: 30080            # the host-reachable port: http://localhost:30080
