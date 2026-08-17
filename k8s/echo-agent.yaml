@@ -1,0 +1,42 @@
+# The echo-agent, as a Kubernetes Deployment + Service.
+#
+# Deployment = "keep N identical pods running". Kubernetes constantly compares
+# actual vs desired and fixes any gap (a crashed pod is replaced automatically).
+# Service    = a stable name + virtual IP that load-balances across those pods.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-agent
+spec:
+  replicas: 3                      # desired state: 3 pods
+  selector:
+    matchLabels:
+      app: echo-agent             # this Deployment owns pods with this label
+  template:                        # the pod blueprint
+    metadata:
+      labels:
+        app: echo-agent
+    spec:
+      containers:
+        - name: echo-agent
+          image: echo-agent:0.2
+          imagePullPolicy: IfNotPresent   # use the local image; don't pull from a registry
+          ports:
+            - containerPort: 8000
+          env:
+            - name: AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name   # each pod reports its own pod name as its id
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-agent
+spec:
+  selector:
+    app: echo-agent             # route to pods with this label
+  ports:
+    - port: 8000                # the Service's port
+      targetPort: 8000          # the container port to forward to
