@@ -29,6 +29,11 @@ spec:
           imagePullPolicy: IfNotPresent   # use the local image; don't pull from a registry
           ports:
             - containerPort: 8000
+          resources:
+            requests:
+              cpu: 20m           # HPA computes utilization against this
+            limits:
+              cpu: 200m
           env:
             - name: AGENT_ID
               valueFrom:

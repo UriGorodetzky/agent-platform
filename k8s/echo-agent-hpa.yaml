@@ -1,0 +1,20 @@
+# Horizontal Pod Autoscaler: scale echo-agent by CPU utilization.
+# Keeps average CPU near 50% of each pod's request, between 3 and 10 replicas.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: echo-agent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: echo-agent
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
