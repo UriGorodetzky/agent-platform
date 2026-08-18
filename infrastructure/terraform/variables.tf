@@ -23,3 +23,16 @@ variable "azs" {
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b"]
 }
+
+variable "db_username" {
+  description = "Master username for the RDS database"
+  type        = string
+  default     = "orchestrator"
+}
+
+variable "db_password" {
+  description = "Master password for RDS — supply via TF_VAR_db_password; never commit"
+  type        = string
+  sensitive   = true # Terraform hides this in plan/output
+  # No default on purpose: it must be provided (kept out of code, like our other secrets).
+}
