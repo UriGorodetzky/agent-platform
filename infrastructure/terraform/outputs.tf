@@ -44,3 +44,8 @@ output "s3_bucket" {
   description = "Bucket for large artifacts"
   value       = aws_s3_bucket.artifacts.bucket
 }
+
+output "orchestrator_role_arn" {
+  description = "Annotate the orchestrator ServiceAccount with this (eks.amazonaws.com/role-arn)"
+  value       = aws_iam_role.orchestrator.arn
+}
