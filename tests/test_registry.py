@@ -1,4 +1,4 @@
-"""Tests for the AgentRegistry."""
+"""Tests for the AgentRegistry (in-memory backend)."""
 
 import pytest
 
@@ -6,19 +6,19 @@ from orchestrator.agents import MockAgent
 from orchestrator.registry import AgentRegistry, NoAgentForCapability
 
 
-def test_select_returns_a_registered_agent():
+async def test_select_returns_a_registered_agent():
     reg = AgentRegistry()
     coder = MockAgent("coder")
     reg.register(coder, ["coding", "debugging"])
 
-    assert reg.select("coding") is coder
-    assert reg.select("debugging") is coder
+    assert await reg.select("coding") is coder
+    assert await reg.select("debugging") is coder
 
 
-def test_select_unknown_capability_raises():
+async def test_select_unknown_capability_raises():
     reg = AgentRegistry()
     with pytest.raises(NoAgentForCapability):
-        reg.select("planning")
+        await reg.select("planning")
 
 
 def test_get_by_name():
@@ -31,16 +31,14 @@ def test_get_by_name():
         reg.get("nobody")
 
 
-def test_select_round_robins_across_agents_with_same_capability():
+async def test_select_round_robins_across_agents_with_same_capability():
     reg = AgentRegistry()
-    a = MockAgent("coder-1")
-    b = MockAgent("coder-2")
-    c = MockAgent("coder-3")
+    a, b, c = MockAgent("coder-1"), MockAgent("coder-2"), MockAgent("coder-3")
     reg.register(a, ["coding"])
     reg.register(b, ["coding"])
     reg.register(c, ["coding"])
 
-    picks = [reg.select("coding") for _ in range(7)]
+    picks = [await reg.select("coding") for _ in range(7)]
     assert picks == [a, b, c, a, b, c, a]   # cycles fairly, then wraps
 
 
@@ -75,43 +73,44 @@ def two_coder_registry(clock: FakeClock, threshold: int = 2, cooldown: float = 3
     return reg, a, b
 
 
-def test_breaker_opens_after_threshold_and_select_skips_it():
+async def test_breaker_opens_after_threshold_and_select_skips_it():
     clock = FakeClock()
     reg, a, b = two_coder_registry(clock, threshold=2)
 
-    reg.record_failure(a)
-    reg.record_failure(a)                         # a's breaker opens
+    await reg.record_failure(a)
+    await reg.record_failure(a)                         # a's breaker opens
 
-    assert {reg.select("coding") for _ in range(6)} == {b}   # a is skipped entirely
+    picks = {await reg.select("coding") for _ in range(6)}
+    assert picks == {b}                                 # a is skipped entirely
 
 
-def test_breaker_half_opens_after_cooldown():
+async def test_breaker_half_opens_after_cooldown():
     clock = FakeClock()
     reg, a, b = two_coder_registry(clock, threshold=2, cooldown=30)
 
-    reg.record_failure(a)
-    reg.record_failure(a)                         # opens at t=0
-    assert {reg.select("coding") for _ in range(4)} == {b}   # skipped while open
+    await reg.record_failure(a)
+    await reg.record_failure(a)                         # opens at t=0
+    assert {await reg.select("coding") for _ in range(4)} == {b}   # skipped while open
 
-    clock.advance(30)                             # cooldown elapsed
-    assert a in {reg.select("coding") for _ in range(4)}     # offered again (half-open)
+    clock.advance(30)                                   # cooldown elapsed
+    assert a in {await reg.select("coding") for _ in range(4)}     # offered again
 
 
-def test_success_closes_the_breaker():
+async def test_success_closes_the_breaker():
     clock = FakeClock()
     reg, a, b = two_coder_registry(clock, threshold=2)
 
-    reg.record_failure(a)
-    reg.record_failure(a)                         # open
-    reg.record_success(a)                         # a success closes it immediately
+    await reg.record_failure(a)
+    await reg.record_failure(a)                         # open
+    await reg.record_success(a)                         # a success closes it
 
-    assert a in {reg.select("coding") for _ in range(4)}
+    assert a in {await reg.select("coding") for _ in range(4)}
 
 
-def test_one_failure_below_threshold_keeps_agent_available():
+async def test_one_failure_below_threshold_keeps_agent_available():
     clock = FakeClock()
     reg, a, b = two_coder_registry(clock, threshold=2)
 
-    reg.record_failure(a)                         # 1 < threshold -> still healthy
+    await reg.record_failure(a)                         # 1 < threshold -> still healthy
 
-    assert a in {reg.select("coding") for _ in range(4)}
+    assert a in {await reg.select("coding") for _ in range(4)}

@@ -89,7 +89,7 @@ def build_coding_graph(
         result: Optional[AgentResult] = None
 
         for attempt in range(1, retry_attempts + 1):
-            agent = registry.select(capability)   # re-select each try: round-robin steers away from a bad replica
+            agent = await registry.select(capability)   # re-select each try: round-robin steers away from a bad replica
             if events is not None and run_id is not None:
                 await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node, attempt=attempt)
 
@@ -97,14 +97,14 @@ def build_coding_graph(
 
             if result.status is TaskStatus.SUCCESS:
                 metrics.agent_attempts_total.labels(node=node, outcome="success").inc()
-                registry.record_success(agent)   # feedback: closes the breaker
+                await registry.record_success(agent)   # feedback: closes the breaker
                 if events is not None and run_id is not None:
                     await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
                 return result
 
             metrics.agent_attempts_total.labels(node=node, outcome="failure").inc()
             if _is_retryable(result):
-                registry.record_failure(agent)   # feedback: may open the breaker
+                await registry.record_failure(agent)   # feedback: may open the breaker
 
             if events is not None and run_id is not None:
                 await events.emit(
