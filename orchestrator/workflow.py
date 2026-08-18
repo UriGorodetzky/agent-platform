@@ -53,10 +53,12 @@ class WorkflowState(TypedDict, total=False):
 
     goal: str            # the high-level user request (input)
     run_id: str          # identifies this run, for event tracking
+    workspace: str       # a real directory the coder writes to and the tester runs in
     plan: str            # produced by the planner node
     code: str            # produced/updated by the coder node
     attempts: int        # how many times the coder has run
     tests_passed: bool   # set by the tester node
+    test_output: str     # the tester's output, fed back to the coder on retry
     review: str          # produced by the reviewer node
 
 
@@ -138,14 +140,25 @@ def build_coding_graph(
 
     async def coder_node(state: WorkflowState) -> dict:
         attempts = state.get("attempts", 0) + 1
-        task = Task(type="coding", prompt=f"Implement this plan:\n{state.get('plan', '')}")
+        prompt = (
+            "You are a coding agent. Implement the following task in Python.\n\n"
+            f"Task: {state['goal']}\n\n"
+            "In the current directory, write the implementation to `solution.py` and "
+            "pytest tests to `test_solution.py`. Run the tests and make sure they pass. "
+            "Complete the task without asking questions."
+        )
+        prior = state.get("test_output", "")
+        if prior:
+            prompt += f"\n\nThe previous attempt's tests FAILED:\n{prior}\n\nFix solution.py so they pass."
+
+        task = Task(type="coding", prompt=prompt, context={"workspace": state.get("workspace")})
         result = await run_agent("coder", "coding", task, state)
         return {"code": result.output, "attempts": attempts}
 
     async def tester_node(state: WorkflowState) -> dict:
-        task = Task(type="testing", prompt=f"Run tests for:\n{state.get('code', '')}")
+        task = Task(type="testing", prompt="run the tests", context={"workspace": state.get("workspace")})
         result = await run_agent("tester", "testing", task, state)
-        return {"tests_passed": result.status is TaskStatus.SUCCESS}
+        return {"tests_passed": result.status is TaskStatus.SUCCESS, "test_output": result.output}
 
     async def reviewer_node(state: WorkflowState) -> dict:
         task = Task(type="review", prompt=f"Review this code:\n{state.get('code', '')}")
