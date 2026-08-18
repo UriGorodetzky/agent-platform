@@ -22,7 +22,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from orchestrator import metrics
-from orchestrator.agents import HTTPAgent, MockAgent
+from orchestrator.agents import ClaudeAgent, HTTPAgent, MockAgent
 from orchestrator.events import EventStore, EventType
 from orchestrator.logging_config import run_id_var, setup_logging
 from orchestrator.models import TaskStatus
@@ -68,25 +68,44 @@ def _make_selection_backend():
 def build_default_registry() -> AgentRegistry:
     """Register agents under their capabilities.
 
-    The "coding" agents come from the ECHO_AGENT_URLS env var (comma-separated
-    URLs) when set — that's how the dockerized orchestrator reaches the echo
-    replicas by service name. With no env var, we fall back to a mock coder so
-    the app still runs locally with zero setup.
+    Every role is a MockAgent by default, so the app runs with zero setup.
+    Opt in to real backends via env:
+      - CLAUDE_ROLES=coding,planning,...  -> use the real Claude Code CLI (costs tokens)
+      - ECHO_AGENT_URLS=http://a,http://b -> use HTTP echo agents for coding
     """
     registry = AgentRegistry(backend=_make_selection_backend())
-    registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
-
+    claude_roles = {r.strip() for r in os.environ.get("CLAUDE_ROLES", "").split(",") if r.strip()}
     coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
-    if coder_urls:
+
+    # planner
+    if "planning" in claude_roles:
+        registry.register(ClaudeAgent("planner"), ["planning"])
+    else:
+        registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
+
+    # coder: real Claude > HTTP echo agents > mock
+    if "coding" in claude_roles:
+        registry.register(ClaudeAgent("coder"), ["coding"])
+        logger.info("using Claude coding agent")
+    elif coder_urls:
         for i, url in enumerate(coder_urls, start=1):
             registry.register(HTTPAgent(f"echo-{i}", base_url=url), ["coding"])
         logger.info("registered HTTP coding agents", extra={"count": len(coder_urls)})
     else:
         registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
-        logger.info("using mock coding agent (no ECHO_AGENT_URLS)")
 
-    registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
-    registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
+    # tester (a mock "test" — a real tester would actually run the code)
+    if "testing" in claude_roles:
+        registry.register(ClaudeAgent("tester"), ["testing"])
+    else:
+        registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
+
+    # reviewer
+    if "review" in claude_roles:
+        registry.register(ClaudeAgent("reviewer"), ["review"])
+    else:
+        registry.register(MockAgent("reviewer", output="LGTM"), ["review"])
+
     return registry
 
 
