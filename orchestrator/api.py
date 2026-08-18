@@ -85,12 +85,24 @@ def build_graph_from_registry(registry: AgentRegistry, events: EventStore | None
     return build_coding_graph(registry, events=events)
 
 
+def make_stores():
+    """Pick the store backend from config: Postgres if DATABASE_URL is a postgres
+    URL, otherwise SQLite at DB_PATH. Same API either way, so nothing else cares."""
+    url = os.environ.get("DATABASE_URL", "")
+    if url.startswith(("postgres://", "postgresql://")):
+        from orchestrator.postgres import PostgresEventStore, PostgresRunStore
+        return PostgresEventStore(url), PostgresRunStore(url)
+    db_path = os.environ.get("DB_PATH", "orchestrator.db")
+    return EventStore(db_path), RunStore(db_path)
+
+
 def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     """Create the FastAPI app. Registry, graph, events, and runs are injectable."""
-    db_path = os.environ.get("DB_PATH", "orchestrator.db")
     registry = registry or build_default_registry()
-    events = events or EventStore(db_path)
-    runs = runs or RunStore(db_path)
+    if events is None or runs is None:
+        made_events, made_runs = make_stores()
+        events = events or made_events
+        runs = runs or made_runs
     graph = graph or build_graph_from_registry(registry, events)
 
     @asynccontextmanager
