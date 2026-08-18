@@ -28,6 +28,7 @@ from orchestrator.logging_config import run_id_var, setup_logging
 from orchestrator.models import TaskStatus
 from orchestrator.registry import AgentRegistry
 from orchestrator.runs import Run, RunStore
+from orchestrator.tracing import setup_tracing
 from orchestrator.workflow import build_coding_graph
 
 setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
@@ -124,6 +125,7 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
         await registry.aclose()
 
     app = FastAPI(title="Agent Orchestration Platform", lifespan=lifespan)
+    setup_tracing(app)   # instruments the app + httpx when OTEL is configured
 
     @app.get("/health")
     async def health() -> dict:
