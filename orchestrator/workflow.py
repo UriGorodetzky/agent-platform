@@ -134,22 +134,27 @@ def build_coding_graph(
         return result
 
     async def planner_node(state: WorkflowState) -> dict:
-        task = Task(type="planning", prompt=f"Make a plan for: {state['goal']}")
+        prompt = (
+            "Break this software goal into a short, concrete list of implementation "
+            "subtasks (the files/functions to create). One subtask per line, no prose.\n\n"
+            f"Goal: {state['goal']}"
+        )
+        task = Task(type="planning", prompt=prompt)
         result = await run_agent("planner", "planning", task, state)
         return {"plan": result.output}
 
     async def coder_node(state: WorkflowState) -> dict:
         attempts = state.get("attempts", 0) + 1
         prompt = (
-            "You are a coding agent. Implement the following task in Python.\n\n"
-            f"Task: {state['goal']}\n\n"
-            "In the current directory, write the implementation to `solution.py` and "
-            "pytest tests to `test_solution.py`. Run the tests and make sure they pass. "
-            "Complete the task without asking questions."
+            "You are a coding agent. Implement the following task in Python, in the "
+            "current directory. Create as many files as the plan needs (e.g. solution.py "
+            "or a small module), plus a `test_solution.py` with pytest tests for the whole "
+            "solution. Run the tests and make sure they pass. Do not ask questions.\n\n"
+            f"Goal: {state['goal']}\n\nPlan (subtasks):\n{state.get('plan', '')}"
         )
         prior = state.get("test_output", "")
         if prior:
-            prompt += f"\n\nThe previous attempt's tests FAILED:\n{prior}\n\nFix solution.py so they pass."
+            prompt += f"\n\nThe previous attempt's tests FAILED:\n{prior}\n\nFix the code so they pass."
 
         task = Task(type="coding", prompt=prompt, context={"workspace": state.get("workspace")})
         result = await run_agent("coder", "coding", task, state)

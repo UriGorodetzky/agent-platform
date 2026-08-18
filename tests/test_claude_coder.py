@@ -26,9 +26,9 @@ async def test_returns_the_written_solution(tmp_path):
     assert (tmp_path / "solution.py").exists()
 
 
-async def test_no_solution_file_is_a_failure(tmp_path):
+async def test_no_code_files_is_a_failure(tmp_path):
     fake = [PY, "-c", "print('I wrote nothing')"]
     result = await ClaudeCoderAgent("coder", command=fake).execute(task(tmp_path))
 
     assert result.status is TaskStatus.FAILURE
-    assert result.metadata["error"] == "no_solution_file"
+    assert result.metadata["error"] == "no_code_files"

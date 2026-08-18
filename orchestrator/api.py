@@ -89,8 +89,8 @@ def build_default_registry(real: bool = False) -> AgentRegistry:
     coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
     real_agents = real   # the closed-loop coder + tester
 
-    # planner
-    if "planning" in claude_roles:
+    # planner: a real Claude planner decomposes the goal into subtasks
+    if real or "planning" in claude_roles:
         registry.register(ClaudeAgent("planner"), ["planning"])
     else:
         registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
@@ -207,7 +207,7 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
 
             use_real = req.real if req.real is not None else default_real
             graph = graph_real if use_real else graph_mock     # per-request choice
-            workspace = create_workspace(run_id)               # a real dir the agents share
+            workspace = create_workspace(run_id, req.goal)     # a real dir the agents share
             logger.info("task starting", extra={"real": use_real, "workspace": workspace})
             state = await graph.ainvoke({"goal": req.goal, "run_id": run_id, "workspace": workspace})
 
