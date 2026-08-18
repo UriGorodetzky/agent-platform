@@ -58,6 +58,7 @@ def test_post_task_runs_workflow():
     assert body["attempts"] == 1
     assert body["review"] == "LGTM"
     assert body["run_id"]                 # a run id was assigned
+    assert body["workspace"]              # the response tells you where the files are
 
 
 def test_post_task_rejects_missing_goal():

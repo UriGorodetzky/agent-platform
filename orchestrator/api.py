@@ -66,6 +66,7 @@ class RunResponse(BaseModel):
     tests_passed: bool
     attempts: int
     review: str | None = None
+    workspace: str = ""   # where the produced files live on disk
 
 
 def _make_selection_backend():
@@ -238,6 +239,7 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
                 tests_passed=tests_passed,
                 attempts=attempts,
                 review=state.get("review"),
+                workspace=workspace,
             )
         finally:
             metrics.tasks_in_progress.dec()                   # gauge: back down, even on error
