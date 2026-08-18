@@ -50,6 +50,11 @@ class RunRequest(BaseModel):
     """The JSON body a client POSTs to /tasks."""
 
     goal: str = Field(description="High-level thing to build")
+    real: bool | None = Field(
+        default=None,
+        description="Use real agents (Claude + pytest) vs mocks. Defaults to the "
+        "server's REAL_AGENTS setting; set per request to override.",
+    )
 
 
 class RunResponse(BaseModel):
@@ -72,18 +77,17 @@ def _make_selection_backend():
     return None  # AgentRegistry falls back to its in-memory backend
 
 
-def build_default_registry() -> AgentRegistry:
+def build_default_registry(real: bool = False) -> AgentRegistry:
     """Register agents under their capabilities.
 
-    Every role is a MockAgent by default, so the app runs with zero setup.
-    Opt in to real backends via env:
-      - CLAUDE_ROLES=coding,planning,...  -> use the real Claude Code CLI (costs tokens)
-      - ECHO_AGENT_URLS=http://a,http://b -> use HTTP echo agents for coding
+    ``real=True`` uses the closed-loop Claude coder + pytest tester; otherwise
+    every role is a mock (with CLAUDE_ROLES / ECHO_AGENT_URLS overrides). The app
+    builds one registry of each kind, and each request chooses which to use.
     """
     registry = AgentRegistry(backend=_make_selection_backend())
     claude_roles = {r.strip() for r in os.environ.get("CLAUDE_ROLES", "").split(",") if r.strip()}
     coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
-    real_agents = os.environ.get("REAL_AGENTS") == "1"   # the closed-loop coder + tester
+    real_agents = real   # the closed-loop coder + tester
 
     # planner
     if "planning" in claude_roles:
@@ -140,21 +144,32 @@ def make_stores():
 
 def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     """Create the FastAPI app. Registry, graph, events, and runs are injectable."""
-    registry = registry or build_default_registry()
     if events is None or runs is None:
         made_events, made_runs = make_stores()
         events = events or made_events
         runs = runs or made_runs
-    graph = graph or build_graph_from_registry(registry, events)
+
+    default_real = os.environ.get("REAL_AGENTS") == "1"   # server-wide default
+    registry = registry or build_default_registry(real=False)
+    if graph is not None:
+        # Injected graph (tests): use it for both modes.
+        graph_mock = graph_real = graph
+        registry_real = registry
+    else:
+        registry_real = build_default_registry(real=True)
+        graph_mock = build_coding_graph(registry, events=events)
+        graph_real = build_coding_graph(registry_real, events=events)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Startup: nothing to do (the stores connect lazily on first use).
         yield
-        # Shutdown: release DB connections and the selection backend (Redis).
+        # Shutdown: release DB connections and the selection backends.
         await events.close()
         await runs.close()
         await registry.aclose()
+        if registry_real is not registry:
+            await registry_real.aclose()
 
     app = FastAPI(title="Agent Orchestration Platform", lifespan=lifespan)
     setup_tracing(app)   # instruments the app + httpx when OTEL is configured
@@ -190,8 +205,10 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
             await runs.create(run_id, req.goal)                # record the run (RUNNING)
             await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
+            use_real = req.real if req.real is not None else default_real
+            graph = graph_real if use_real else graph_mock     # per-request choice
             workspace = create_workspace(run_id)               # a real dir the agents share
-            logger.info("workspace created", extra={"workspace": workspace})
+            logger.info("task starting", extra={"real": use_real, "workspace": workspace})
             state = await graph.ainvoke({"goal": req.goal, "run_id": run_id, "workspace": workspace})
 
             tests_passed = state.get("tests_passed", False)

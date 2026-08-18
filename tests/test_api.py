@@ -7,7 +7,7 @@ run on one event loop (aiosqlite's connection is bound to the loop it opened on)
 
 from fastapi.testclient import TestClient
 
-from orchestrator.agents import ClaudeAgent, MockAgent
+from orchestrator.agents import ClaudeAgent, ClaudeCoderAgent, MockAgent, PytestTesterAgent
 from orchestrator.api import build_default_registry, create_app
 from orchestrator.events import EventStore
 from orchestrator.runs import RunStore
@@ -31,6 +31,13 @@ def test_coder_is_mock_by_default_but_claude_with_env(monkeypatch):
     # Opt in: CLAUDE_ROLES swaps in the real Claude agent (constructed, not called).
     monkeypatch.setenv("CLAUDE_ROLES", "coding")
     assert isinstance(build_default_registry().get("coder"), ClaudeAgent)
+
+
+def test_real_flag_selects_the_closed_loop_agents():
+    # real=True gives the workspace coder + pytest tester (constructed, not called).
+    registry = build_default_registry(real=True)
+    assert isinstance(registry.get("coder"), ClaudeCoderAgent)
+    assert isinstance(registry.get("tester"), PytestTesterAgent)
 
 
 def test_version_reports_git_sha():
