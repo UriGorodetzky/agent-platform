@@ -20,6 +20,7 @@ import logging
 from typing import Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from opentelemetry import trace
 
 from orchestrator import metrics
 from orchestrator.events import EventStore, EventType
@@ -28,6 +29,7 @@ from orchestrator.models import AgentResult, Task, TaskStatus
 from orchestrator.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)   # a no-op until tracing is configured
 
 
 def _is_retryable(result: AgentResult) -> bool:
@@ -88,40 +90,44 @@ def build_coding_graph(
             run_id_var.set(run_id)            # so every log line here carries the run_id
         result: Optional[AgentResult] = None
 
-        for attempt in range(1, retry_attempts + 1):
-            agent = await registry.select(capability)   # re-select each try: round-robin steers away from a bad replica
-            if events is not None and run_id is not None:
-                await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node, attempt=attempt)
-
-            result = await agent.execute(task)
-
-            if result.status is TaskStatus.SUCCESS:
-                metrics.agent_attempts_total.labels(node=node, outcome="success").inc()
-                await registry.record_success(agent)   # feedback: closes the breaker
+        with tracer.start_as_current_span(f"node:{node}") as span:
+            span.set_attribute("capability", capability)
+            for attempt in range(1, retry_attempts + 1):
+                agent = await registry.select(capability)   # re-select each try: round-robin steers away from a bad replica
+                span.set_attribute("agent", agent.name)
                 if events is not None and run_id is not None:
-                    await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
-                return result
+                    await events.emit(run_id, EventType.AGENT_STARTED, agent=agent.name, node=node, attempt=attempt)
 
-            metrics.agent_attempts_total.labels(node=node, outcome="failure").inc()
-            if _is_retryable(result):
-                await registry.record_failure(agent)   # feedback: may open the breaker
+                result = await agent.execute(task)
 
-            if events is not None and run_id is not None:
-                await events.emit(
-                    run_id, EventType.AGENT_FAILED,
-                    agent=agent.name, node=node, attempt=attempt, error=result.metadata.get("error"),
+                if result.status is TaskStatus.SUCCESS:
+                    metrics.agent_attempts_total.labels(node=node, outcome="success").inc()
+                    await registry.record_success(agent)   # feedback: closes the breaker
+                    span.set_attribute("attempts", attempt)
+                    if events is not None and run_id is not None:
+                        await events.emit(run_id, EventType.AGENT_COMPLETED, agent=agent.name, node=node, attempt=attempt)
+                    return result
+
+                metrics.agent_attempts_total.labels(node=node, outcome="failure").inc()
+                if _is_retryable(result):
+                    await registry.record_failure(agent)   # feedback: may open the breaker
+
+                if events is not None and run_id is not None:
+                    await events.emit(
+                        run_id, EventType.AGENT_FAILED,
+                        agent=agent.name, node=node, attempt=attempt, error=result.metadata.get("error"),
+                    )
+
+                if not _is_retryable(result) or attempt == retry_attempts:
+                    break
+
+                delay = retry_base_delay * (2 ** (attempt - 1))   # exponential backoff
+                logger.warning(
+                    "agent failed, retrying",
+                    extra={"agent": agent.name, "node": node, "attempt": attempt,
+                           "error": result.metadata.get("error"), "next_delay_s": round(delay, 3)},
                 )
-
-            if not _is_retryable(result) or attempt == retry_attempts:
-                break
-
-            delay = retry_base_delay * (2 ** (attempt - 1))   # exponential backoff
-            logger.warning(
-                "agent failed, retrying",
-                extra={"agent": agent.name, "node": node, "attempt": attempt,
-                       "error": result.metadata.get("error"), "next_delay_s": round(delay, 3)},
-            )
-            await asyncio.sleep(delay)
+                await asyncio.sleep(delay)
 
         return result
 
