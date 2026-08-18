@@ -7,7 +7,8 @@ run on one event loop (aiosqlite's connection is bound to the loop it opened on)
 
 from fastapi.testclient import TestClient
 
-from orchestrator.api import create_app
+from orchestrator.agents import ClaudeAgent, MockAgent
+from orchestrator.api import build_default_registry, create_app
 from orchestrator.events import EventStore
 from orchestrator.runs import RunStore
 
@@ -21,6 +22,15 @@ def test_health():
         resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_coder_is_mock_by_default_but_claude_with_env(monkeypatch):
+    # Default: a mock coder (no external calls, works out of the box).
+    assert isinstance(build_default_registry().get("coder"), MockAgent)
+
+    # Opt in: CLAUDE_ROLES swaps in the real Claude agent (constructed, not called).
+    monkeypatch.setenv("CLAUDE_ROLES", "coding")
+    assert isinstance(build_default_registry().get("coder"), ClaudeAgent)
 
 
 def test_version_reports_git_sha():
