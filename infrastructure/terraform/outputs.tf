@@ -29,3 +29,18 @@ output "ecr_repository_urls" {
   description = "Push/pull URLs for each image repository"
   value       = { for name, repo in aws_ecr_repository.app : name => repo.repository_url }
 }
+
+output "rds_endpoint" {
+  description = "PostgreSQL host (the app connects here instead of a SQLite file)"
+  value       = aws_db_instance.main.address
+}
+
+output "redis_endpoint" {
+  description = "Redis host for shared ephemeral state"
+  value       = aws_elasticache_cluster.main.cache_nodes[0].address
+}
+
+output "s3_bucket" {
+  description = "Bucket for large artifacts"
+  value       = aws_s3_bucket.artifacts.bucket
+}
