@@ -22,7 +22,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from orchestrator import metrics
-from orchestrator.agents import ClaudeAgent, HTTPAgent, MockAgent
+from orchestrator.agents import (
+    ClaudeAgent,
+    ClaudeCoderAgent,
+    HTTPAgent,
+    MockAgent,
+    PytestTesterAgent,
+)
 from orchestrator.events import EventStore, EventType
 from orchestrator.logging_config import run_id_var, setup_logging
 from orchestrator.models import TaskStatus
@@ -30,6 +36,7 @@ from orchestrator.registry import AgentRegistry
 from orchestrator.runs import Run, RunStore
 from orchestrator.tracing import setup_tracing
 from orchestrator.workflow import build_coding_graph
+from orchestrator.workspace import create_workspace
 
 setup_logging(os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -76,6 +83,7 @@ def build_default_registry() -> AgentRegistry:
     registry = AgentRegistry(backend=_make_selection_backend())
     claude_roles = {r.strip() for r in os.environ.get("CLAUDE_ROLES", "").split(",") if r.strip()}
     coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
+    real_agents = os.environ.get("REAL_AGENTS") == "1"   # the closed-loop coder + tester
 
     # planner
     if "planning" in claude_roles:
@@ -83,10 +91,12 @@ def build_default_registry() -> AgentRegistry:
     else:
         registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
 
-    # coder: real Claude > HTTP echo agents > mock
-    if "coding" in claude_roles:
+    # coder: real Claude-in-a-workspace > text Claude > HTTP echo agents > mock
+    if real_agents:
+        registry.register(ClaudeCoderAgent("coder"), ["coding"])
+        logger.info("using Claude coder (workspace)")
+    elif "coding" in claude_roles:
         registry.register(ClaudeAgent("coder"), ["coding"])
-        logger.info("using Claude coding agent")
     elif coder_urls:
         for i, url in enumerate(coder_urls, start=1):
             registry.register(HTTPAgent(f"echo-{i}", base_url=url), ["coding"])
@@ -94,8 +104,11 @@ def build_default_registry() -> AgentRegistry:
     else:
         registry.register(MockAgent("coder", output="def solution(): ..."), ["coding"])
 
-    # tester (a mock "test" — a real tester would actually run the code)
-    if "testing" in claude_roles:
+    # tester: real pytest runner > text Claude > mock
+    if real_agents:
+        registry.register(PytestTesterAgent("tester"), ["testing"])
+        logger.info("using pytest tester")
+    elif "testing" in claude_roles:
         registry.register(ClaudeAgent("tester"), ["testing"])
     else:
         registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
@@ -177,7 +190,9 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
             await runs.create(run_id, req.goal)                # record the run (RUNNING)
             await events.emit(run_id, EventType.TASK_STARTED, goal=req.goal)
 
-            state = await graph.ainvoke({"goal": req.goal, "run_id": run_id})
+            workspace = create_workspace(run_id)               # a real dir the agents share
+            logger.info("workspace created", extra={"workspace": workspace})
+            state = await graph.ainvoke({"goal": req.goal, "run_id": run_id, "workspace": workspace})
 
             tests_passed = state.get("tests_passed", False)
             attempts = state.get("attempts", 0)
