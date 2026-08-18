@@ -28,4 +28,4 @@ def test_running_a_task_updates_the_counters():
         body = client.get("/metrics").text
 
     assert 'orchestrator_tasks_total{status="success"}' in body
-    assert 'orchestrator_agent_attempts_total{node="coder",outcome="success"}' in body
+    assert 'orchestrator_agent_attempts_total{node="coding",outcome="success"}' in body
