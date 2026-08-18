@@ -149,7 +149,9 @@ def build_coding_graph(
             "You are a coding agent. Implement the following task in Python, in the "
             "current directory. Create as many files as the plan needs (e.g. solution.py "
             "or a small module), plus a `test_solution.py` with pytest tests for the whole "
-            "solution. Run the tests and make sure they pass. Do not ask questions.\n\n"
+            "solution, and a short `README.md` explaining exactly how to run/use it (the "
+            "commands to run from this directory). Run the tests and make sure they pass. "
+            "Do not ask questions.\n\n"
             f"Goal: {state['goal']}\n\nPlan (subtasks):\n{state.get('plan', '')}"
         )
         prior = state.get("test_output", "")
