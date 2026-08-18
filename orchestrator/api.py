@@ -55,6 +55,15 @@ class RunResponse(BaseModel):
     review: str | None = None
 
 
+def _make_selection_backend():
+    """Share selection state via Redis if REDIS_URL is set; else in-memory."""
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        from orchestrator.selection import RedisBackend
+        return RedisBackend(redis_url)
+    return None  # AgentRegistry falls back to its in-memory backend
+
+
 def build_default_registry() -> AgentRegistry:
     """Register agents under their capabilities.
 
@@ -63,7 +72,7 @@ def build_default_registry() -> AgentRegistry:
     replicas by service name. With no env var, we fall back to a mock coder so
     the app still runs locally with zero setup.
     """
-    registry = AgentRegistry()
+    registry = AgentRegistry(backend=_make_selection_backend())
     registry.register(MockAgent("planner", output="1. implement it  2. test it"), ["planning"])
 
     coder_urls = [u.strip() for u in os.environ.get("ECHO_AGENT_URLS", "").split(",") if u.strip()]
@@ -109,9 +118,10 @@ def create_app(registry=None, graph=None, events=None, runs=None) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Startup: nothing to do (the stores connect lazily on first use).
         yield
-        # Shutdown: release both DB connections and their background threads.
+        # Shutdown: release DB connections and the selection backend (Redis).
         await events.close()
         await runs.close()
+        await registry.aclose()
 
     app = FastAPI(title="Agent Orchestration Platform", lifespan=lifespan)
 

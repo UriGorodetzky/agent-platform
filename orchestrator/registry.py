@@ -1,24 +1,20 @@
 """Agent Registry — a lookup from capability to a concrete agent.
 
-Without it, the graph must name every agent explicitly. With it, the graph
-asks "give me something that can plan / code / test" and the registry decides
-which concrete agent answers. In-memory (plain dicts) for now — no database
-until we genuinely need persistence across restarts.
-
-Selection is round-robin, with a per-agent **circuit breaker**: an agent that
-fails repeatedly is marked unhealthy and skipped until a cooldown passes, so we
-stop wasting calls (and time) on a replica that is down.
+Selection is round-robin with a per-agent circuit breaker. The stateful part
+(cursor + breaker health) lives in a pluggable backend (in-memory by default,
+Redis when shared across instances), so ``select`` and the feedback methods are
+async. The registry itself just maps capabilities to agents.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 from orchestrator import metrics
 from orchestrator.agents.base import Agent
+from orchestrator.selection import InMemoryBackend
 
 logger = logging.getLogger(__name__)
 
@@ -27,37 +23,23 @@ class NoAgentForCapability(Exception):
     """Raised when nothing registered can handle a requested capability."""
 
 
-@dataclass
-class _Health:
-    """Circuit-breaker state for one agent.
-
-    ``opened_at is None`` means the breaker is CLOSED (healthy). Once
-    ``consecutive_failures`` reaches the threshold, ``opened_at`` is stamped
-    and the breaker is OPEN. After the cooldown elapses the agent is offered
-    one trial call (HALF-OPEN); its success or failure closes or re-opens it.
-    """
-
-    consecutive_failures: int = 0
-    opened_at: float | None = None
-
-
 class AgentRegistry:
     """Holds agents, selects by capability (round-robin + circuit breaker)."""
 
     def __init__(
         self,
         *,
+        backend=None,
         failure_threshold: int = 3,
         cooldown: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._by_name: dict[str, Agent] = {}
         self._by_capability: dict[str, list[Agent]] = {}
-        self._next_index: dict[str, int] = {}      # per-capability round-robin cursor
-        self._health: dict[str, _Health] = {}      # per-agent breaker state (by name)
-        self._failure_threshold = failure_threshold
-        self._cooldown = cooldown
-        self._clock = clock                         # injectable for testing
+        # Default to the in-memory backend; callers pass a RedisBackend to share state.
+        self._backend = backend or InMemoryBackend(
+            failure_threshold=failure_threshold, cooldown=cooldown, clock=clock
+        )
 
     def register(self, agent: Agent, capabilities: list[str]) -> None:
         """Add an agent and record which capabilities it can serve."""
@@ -71,14 +53,8 @@ class AgentRegistry:
             raise KeyError(f"No agent named {name!r}")
         return self._by_name[name]
 
-    def select(self, capability: str) -> Agent:
-        """Pick an agent for ``capability``: round-robin, skipping open breakers.
-
-        Starting at the round-robin cursor, return the first *available* agent
-        (breaker closed, or cooldown elapsed for a half-open trial). If every
-        agent's breaker is open, fall back to the next one anyway — trying is
-        better than hard-failing.
-        """
+    async def select(self, capability: str) -> Agent:
+        """Pick an agent for ``capability``: round-robin, skipping open breakers."""
         agents = self._by_capability.get(capability, [])
         if not agents:
             raise NoAgentForCapability(
@@ -86,44 +62,26 @@ class AgentRegistry:
             )
 
         n = len(agents)
-        start = self._next_index.get(capability, 0)
+        start = await self._backend.next_index(capability, n)
         for offset in range(n):
             index = (start + offset) % n
             agent = agents[index]
-            if self._is_available(agent):
-                self._next_index[capability] = (index + 1) % n
+            if await self._backend.is_available(agent.name):
                 return agent
 
-        # All breakers open — advance the cursor and hand one out regardless.
-        index = start % n
-        self._next_index[capability] = (index + 1) % n
-        return agents[index]
+        # Every breaker is open — hand one out anyway (trying beats hard-failing).
+        return agents[start]
 
-    def record_success(self, agent: Agent) -> None:
-        """Report a successful call — closes the breaker (resets its state)."""
-        self._health[agent.name] = _Health()
+    async def record_success(self, agent: Agent) -> None:
+        """Report a successful call — closes the breaker."""
+        await self._backend.record_success(agent.name)
 
-    def record_failure(self, agent: Agent) -> None:
+    async def record_failure(self, agent: Agent) -> None:
         """Report an infrastructure failure — may open the breaker."""
-        health = self._health.setdefault(agent.name, _Health())
-        health.consecutive_failures += 1
-        if health.consecutive_failures >= self._failure_threshold:
-            was_open = health.opened_at is not None
-            health.opened_at = self._clock()   # (re)open — resets the cooldown clock
-            if not was_open:                   # log/count only on the closed -> open transition
-                logger.warning(
-                    "circuit breaker opened",
-                    extra={"agent": agent.name, "failures": health.consecutive_failures},
-                )
-                metrics.circuit_breaker_opens_total.labels(agent=agent.name).inc()
-
-    def _is_available(self, agent: Agent) -> bool:
-        """True if the agent's breaker allows a call right now."""
-        health = self._health.get(agent.name)
-        if health is None or health.opened_at is None:
-            return True  # never registered a problem, or breaker is closed
-        # Breaker is open: only available once the cooldown has elapsed (half-open).
-        return (self._clock() - health.opened_at) >= self._cooldown
+        just_opened = await self._backend.record_failure(agent.name)
+        if just_opened:
+            logger.warning("circuit breaker opened", extra={"agent": agent.name})
+            metrics.circuit_breaker_opens_total.labels(agent=agent.name).inc()
 
     def capabilities(self) -> dict[str, list[str]]:
         """Map capability -> agent names (for introspection / GET /agents)."""
@@ -131,3 +89,7 @@ class AgentRegistry:
             cap: [agent.name for agent in agents]
             for cap, agents in self._by_capability.items()
         }
+
+    async def aclose(self) -> None:
+        """Release backend resources (e.g. the Redis connection)."""
+        await self._backend.close()
