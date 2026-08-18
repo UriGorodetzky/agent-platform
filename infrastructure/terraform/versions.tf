@@ -7,6 +7,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0" # used to fetch the EKS OIDC thumbprint for IRSA
+    }
   }
 
   # In production the state lives remotely (shared + locked), e.g.:
