@@ -24,3 +24,8 @@ output "eks_cluster_endpoint" {
   description = "The Kubernetes API endpoint"
   value       = aws_eks_cluster.main.endpoint
 }
+
+output "ecr_repository_urls" {
+  description = "Push/pull URLs for each image repository"
+  value       = { for name, repo in aws_ecr_repository.app : name => repo.repository_url }
+}
