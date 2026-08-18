@@ -14,8 +14,6 @@ from orchestrator.agents.claude import _default_claude_command
 from orchestrator.executor import run_subprocess
 from orchestrator.models import AgentResult, Task, TaskStatus
 
-SOLUTION_FILE = "solution.py"
-
 
 class ClaudeCoderAgent(Agent):
     """Runs Claude Code with tool access in ``task.context['workspace']``."""
@@ -43,19 +41,27 @@ class ClaudeCoderAgent(Agent):
             cwd=workspace,
         )
 
-        # The real output is the file Claude wrote, not its chat summary.
+        # The real output is the code files Claude wrote, not its chat summary.
+        # Read every non-test .py file so a multi-file project comes through too.
         code = ""
         if workspace:
-            solution = pathlib.Path(workspace) / SOLUTION_FILE
-            if solution.exists():
-                code = solution.read_text(encoding="utf-8", errors="replace")
+            root = pathlib.Path(workspace)
+            files = sorted(
+                p for p in root.rglob("*.py")           # recursive: catch package subdirs
+                if not p.name.startswith("test_")
+                and "__pycache__" not in p.parts
+                and ".pytest_cache" not in p.parts
+            )
+            code = "\n\n".join(
+                f"# {p.relative_to(root)}\n{p.read_text(encoding='utf-8', errors='replace')}" for p in files
+            )
 
         if result.timed_out:
             return AgentResult(task_id=task.id, status=TaskStatus.FAILURE,
                                metadata={"agent": self.name, "error": "timeout"})
         if not code:
             return AgentResult(task_id=task.id, status=TaskStatus.FAILURE, output=result.stdout.strip(),
-                               metadata={"agent": self.name, "error": "no_solution_file"})
+                               metadata={"agent": self.name, "error": "no_code_files"})
 
         return AgentResult(
             task_id=task.id,
