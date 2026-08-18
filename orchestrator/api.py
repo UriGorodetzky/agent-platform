@@ -25,6 +25,7 @@ from orchestrator import metrics
 from orchestrator.agents import (
     ClaudeAgent,
     ClaudeCoderAgent,
+    ClaudeDocAgent,
     HTTPAgent,
     MockAgent,
     PytestTesterAgent,
@@ -117,6 +118,12 @@ def build_default_registry(real: bool = False) -> AgentRegistry:
         registry.register(ClaudeAgent("tester"), ["testing"])
     else:
         registry.register(MockAgent("tester", output="all tests passed"), ["testing"])
+
+    # docs writer — a second specialized agent the planner can route "docs" subtasks to
+    if real:
+        registry.register(ClaudeDocAgent("doc-writer"), ["docs"])
+    else:
+        registry.register(MockAgent("doc-writer", output="# README"), ["docs"])
 
     # reviewer
     if "review" in claude_roles:

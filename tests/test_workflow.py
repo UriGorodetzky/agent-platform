@@ -3,7 +3,21 @@
 from orchestrator.agents import Agent, MockAgent
 from orchestrator.models import AgentResult, Task, TaskStatus
 from orchestrator.registry import AgentRegistry
-from orchestrator.workflow import build_coding_graph
+from orchestrator.workflow import build_coding_graph, parse_subtasks
+
+
+def test_parse_subtasks_routes_tagged_lines_by_capability():
+    plan = "coding: implement operations.py\n- docs: write a README\nsomething untagged"
+    assert parse_subtasks(plan) == [
+        ("coding", "implement operations.py"),
+        ("docs", "write a README"),
+        ("coding", "something untagged"),
+    ]
+
+
+def test_parse_subtasks_defaults_a_plain_plan_to_one_coding_subtask():
+    assert parse_subtasks("1. implement it  2. test it") == [("coding", "implement it  2. test it")]
+    assert parse_subtasks("") == []
 
 
 class FlakyTester(Agent):

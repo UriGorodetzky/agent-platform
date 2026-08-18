@@ -32,6 +32,29 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)   # a no-op until tracing is configured
 
 
+BUILD_CAPABILITIES = {"coding", "docs"}   # capabilities a subtask may route to
+
+
+def parse_subtasks(plan: str) -> list[tuple[str, str]]:
+    """Parse the planner's output into (capability, description) subtasks.
+
+    Lines shaped ``coding: implement X`` route to that capability; anything else
+    defaults to coding. So a plain mock plan becomes a single coding subtask.
+    """
+    subtasks: list[tuple[str, str]] = []
+    for raw in plan.splitlines():
+        line = raw.strip().lstrip("-*0123456789. ").strip()
+        if not line:
+            continue
+        cap, sep, desc = line.partition(":")
+        cap = cap.strip().lower()
+        if sep and cap in BUILD_CAPABILITIES and desc.strip():
+            subtasks.append((cap, desc.strip()))
+        else:
+            subtasks.append(("coding", line))
+    return subtasks
+
+
 def _is_retryable(result: AgentResult) -> bool:
     """Retry only *infrastructure* failures, not task-level ones.
 
@@ -135,32 +158,45 @@ def build_coding_graph(
 
     async def planner_node(state: WorkflowState) -> dict:
         prompt = (
-            "Break this software goal into a short, concrete list of implementation "
-            "subtasks (the files/functions to create). One subtask per line, no prose.\n\n"
+            "Break this software goal into a short list of subtasks. Output one per "
+            "line as `capability: description`, where capability is `coding` (implement "
+            "code + pytest tests) or `docs` (write a README with run instructions). "
+            "No prose.\n\n"
             f"Goal: {state['goal']}"
         )
         task = Task(type="planning", prompt=prompt)
         result = await run_agent("planner", "planning", task, state)
         return {"plan": result.output}
 
-    async def coder_node(state: WorkflowState) -> dict:
+    async def dispatch_node(state: WorkflowState) -> dict:
+        """Route each subtask to the specialized agent for its capability."""
         attempts = state.get("attempts", 0) + 1
-        prompt = (
-            "You are a coding agent. Implement the following task in Python, in the "
-            "current directory. Create as many files as the plan needs (e.g. solution.py "
-            "or a small module), plus a `test_solution.py` with pytest tests for the whole "
-            "solution, and a short `README.md` explaining exactly how to run/use it (the "
-            "commands to run from this directory). Run the tests and make sure they pass. "
-            "Do not ask questions.\n\n"
-            f"Goal: {state['goal']}\n\nPlan (subtasks):\n{state.get('plan', '')}"
-        )
+        subtasks = parse_subtasks(state.get("plan", "")) or [("coding", state["goal"])]
         prior = state.get("test_output", "")
-        if prior:
-            prompt += f"\n\nThe previous attempt's tests FAILED:\n{prior}\n\nFix the code so they pass."
+        code = ""
 
-        task = Task(type="coding", prompt=prompt, context={"workspace": state.get("workspace")})
-        result = await run_agent("coder", "coding", task, state)
-        return {"code": result.output, "attempts": attempts}
+        for capability, desc in subtasks:
+            if capability == "docs":
+                prompt = (
+                    f"Write a short README.md in the current directory explaining how to run/use "
+                    f"the project. Focus: {desc}. Goal: {state['goal']}. Do not ask questions."
+                )
+            else:  # coding
+                prompt = (
+                    "You are a coding agent. Implement this subtask in Python in the current "
+                    "directory, creating the files it needs plus pytest tests in test_*.py, and "
+                    "make the tests pass. Do not ask questions.\n\n"
+                    f"Subtask: {desc}\nOverall goal: {state['goal']}"
+                )
+                if prior:
+                    prompt += f"\n\nThe previous attempt's tests FAILED:\n{prior}\n\nFix the code so they pass."
+
+            task = Task(type=capability, prompt=prompt, context={"workspace": state.get("workspace")})
+            result = await run_agent(capability, capability, task, state)   # routed by capability
+            if capability == "coding" and result.output:
+                code = result.output   # the coder returns the assembled .py files
+
+        return {"code": code, "attempts": attempts}
 
     async def tester_node(state: WorkflowState) -> dict:
         task = Task(type="testing", prompt="run the tests", context={"workspace": state.get("workspace")})
@@ -186,7 +222,7 @@ def build_coding_graph(
 
     builder = StateGraph(WorkflowState)
     builder.add_node("planner", planner_node)
-    builder.add_node("coder", coder_node)
+    builder.add_node("coder", dispatch_node)   # dispatches subtasks to specialized agents
     builder.add_node("tester", tester_node)
     builder.add_node("reviewer", reviewer_node)
 
